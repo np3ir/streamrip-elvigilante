@@ -1,0 +1,19 @@
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Databases
+*.db
+*.db-journal
+
+# Session/sensitive files
+*session.json
+miarchivo.txt
+*.log
+
+# IDE/Editor specific
+.idea/
+.vscode/
