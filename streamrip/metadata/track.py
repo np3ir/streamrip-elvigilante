@@ -252,7 +252,11 @@ class TrackMetadata:
         artist_obj = resp.get("artist", {})
         # Use contributors list when available (may contain multiple artists);
         # fall back to the single artist field. artist_separator joins multiple names.
-        contribs = [c["name"] for c in resp.get("contributors", []) if c.get("name")]
+        contribs = [
+            c["name"]
+            for c in resp.get("contributors", [])
+            if isinstance(c.get("name"), str) and c["name"]
+        ]
         if contribs:
             artist = artist_separator.join(contribs)
         else:
@@ -261,7 +265,11 @@ class TrackMetadata:
         discnumber = typed(resp.get("disk_number", 1), int)
         isrc = typed(resp.get("isrc"), str | None)
         explicit = resp.get("explicit_lyrics", False)
-        composers = [c["name"] for c in resp.get("contributors", []) if c.get("role") == "Composer" and c.get("name")]
+        composers = [
+            c["name"]
+            for c in resp.get("contributors", [])
+            if c.get("role") == "Composer" and isinstance(c.get("name"), str) and c["name"]
+        ]
         composer = ", ".join(composers) if composers else None
         track_id = str(resp.get("id", ""))
         quality = 2
