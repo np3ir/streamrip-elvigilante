@@ -74,7 +74,7 @@ class TrackMetadata:
         return truncate_filepath_to_max(full_path)
 
     @classmethod
-    def from_qobuz(cls, album: AlbumMetadata, resp: dict) -> TrackMetadata | None:
+    def from_qobuz(cls, album: AlbumMetadata, resp: dict, artist_separator: str = ", ") -> TrackMetadata | None:
         def split_feat_artists(name: str) -> list[str]:
             separators = [" feat. ", " featuring ", " feat ", " ft. ", " ft "]
             for sep in separators:
@@ -129,7 +129,7 @@ class TrackMetadata:
             if norm not in seen:
                 all_artists.append(a.strip())
                 seen.add(norm)
-        artist_string = ", ".join(all_artists) if all_artists else "Unknown"
+        artist_string = artist_separator.join(all_artists) if all_artists else "Unknown"
 
         title = typed(resp["title"].strip(), str)
         for artist in all_artists:
@@ -202,9 +202,9 @@ class TrackMetadata:
         )
 
     @classmethod
-    def from_tidal(cls, album: AlbumMetadata, resp: dict) -> TrackMetadata | None:
+    def from_tidal(cls, album: AlbumMetadata, resp: dict, artist_separator: str = ", ") -> TrackMetadata | None:
         title = typed(resp.get("title", "Unknown Title"), str)
-        artist = ", ".join(a["name"] for a in resp.get("artists", [])) or "Unknown Artist"
+        artist = artist_separator.join(a["name"] for a in resp.get("artists", [])) or "Unknown Artist"
         composer_raw = resp.get("composer")
         composer = typed(composer_raw.get("name") if isinstance(composer_raw, dict) else composer_raw, str | None)
         tracknumber = typed(resp.get("trackNumber", 1), int)
@@ -247,14 +247,14 @@ class TrackMetadata:
         )
 
     @classmethod
-    def from_deezer(cls, album: AlbumMetadata, resp: dict) -> TrackMetadata | None:
+    def from_deezer(cls, album: AlbumMetadata, resp: dict, artist_separator: str = ", ") -> TrackMetadata | None:
         title = typed(resp.get("title", "Unknown Title"), str)
         artist_obj = resp.get("artist", {})
         artist = artist_obj.get("name", "Unknown Artist")
         if "contributors" in resp:
             contribs = [c["name"] for c in resp["contributors"]]
             if contribs:
-                artist = ", ".join(contribs)
+                artist = artist_separator.join(contribs)
         tracknumber = typed(resp.get("track_position", 1), int)
         discnumber = typed(resp.get("disk_number", 1), int)
         isrc = typed(resp.get("isrc"), str | None)
@@ -293,7 +293,7 @@ class TrackMetadata:
         raise NotImplementedError("SoundCloud track support not yet implemented")
 
     @classmethod
-    def from_resp(cls, album_or_source, source_or_resp, maybe_resp=None) -> TrackMetadata | None:
+    def from_resp(cls, album_or_source, source_or_resp, maybe_resp=None, artist_separator: str = ", ") -> TrackMetadata | None:
         if maybe_resp is not None:
             album = album_or_source
             source = source_or_resp
@@ -310,9 +310,9 @@ class TrackMetadata:
             logger.error(f"[from_resp] Invalid resp type: expected dict, got {type(resp)} - {resp}")
             return None
         logger.debug(f"[DEBUG] Parsing metadata from source: {source}")
-        if source == "qobuz": return cls.from_qobuz(album, resp)
-        if source == "tidal": return cls.from_tidal(album, resp)
-        if source == "deezer": return cls.from_deezer(album, resp)
+        if source == "qobuz": return cls.from_qobuz(album, resp, artist_separator)
+        if source == "tidal": return cls.from_tidal(album, resp, artist_separator)
+        if source == "deezer": return cls.from_deezer(album, resp, artist_separator)
         if source == "soundcloud": return cls.from_soundcloud(album, resp)
         logger.error(f"[from_resp] Unknown source: {source}")
         return None
