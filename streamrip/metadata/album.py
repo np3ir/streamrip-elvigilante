@@ -367,7 +367,7 @@ class AlbumMetadata:
         )
 
     @classmethod
-    def from_tidal_playlist_track_resp(cls, resp: dict) -> AlbumMetadata | None:
+    def from_tidal_playlist_track_resp(cls, resp: dict, artist_separator: str = ", ") -> AlbumMetadata | None:
         """Handles single track responses containing album info."""
         album_resp = resp.get("album", {})
         if not resp.get("allowStreaming", False):
@@ -380,7 +380,7 @@ class AlbumMetadata:
         copyright = resp.get("copyright", "")
         artists = resp.get("artists", [])
         albumartist = (
-            ", ".join(a["name"] for a in artists)
+            artist_separator.join(a["name"] for a in artists)
             or album_resp.get("artist", {}).get("name", "Unknown Artist")
         )
         disctotal = resp.get("volumeNumber", 1)
@@ -436,14 +436,14 @@ class AlbumMetadata:
         raise Exception("Invalid source")
 
     @classmethod
-    def from_track_resp(cls, resp: dict, source: str) -> AlbumMetadata | None:
+    def from_track_resp(cls, resp: dict, source: str, artist_separator: str = ", ") -> AlbumMetadata | None:
         if not source:
             raise Exception("Invalid source: None or empty")
         source = source.strip().lower()
         if source == "qobuz":
             return cls.from_qobuz(resp["album"])
         if source == "tidal":
-            return cls.from_tidal_playlist_track_resp(resp)
+            return cls.from_tidal_playlist_track_resp(resp, artist_separator)
         if source == "soundcloud":
             return cls.from_soundcloud(resp)
         if source == "deezer":

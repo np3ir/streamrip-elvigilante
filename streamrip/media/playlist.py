@@ -108,13 +108,14 @@ class PendingPlaylistTrack(Pending):
                 logger.error(f"Could not stream track {self.id}: {e}")
                 return None
 
-        album = AlbumMetadata.from_track_resp(resp, self.client.source)
+        sep = self.config.session.metadata.artist_separator
+        album = AlbumMetadata.from_track_resp(resp, self.client.source, sep)
         if album is None:
             logger.error(f"Track ({self.id}) not available.")
             self.db.set_failed(self.client.source, "track", self.id)
             return None
-        
-        meta = TrackMetadata.from_resp(album, self.client.source, resp)
+
+        meta = TrackMetadata.from_resp(album, self.client.source, resp, sep)
         if meta is None:
             logger.error(f"Track metadata error ({self.id}).")
             self.db.set_failed(self.client.source, "track", self.id)
