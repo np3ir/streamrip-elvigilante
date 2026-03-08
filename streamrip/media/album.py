@@ -11,7 +11,7 @@ from ..db import Database
 from ..exceptions import NonStreamableError
 from ..filepath_utils import clean_filepath
 from ..metadata import AlbumMetadata
-from ..metadata.util import get_album_track_ids
+from ..metadata.util import DEFAULT_ARTIST_SEPARATOR, get_album_track_ids
 from .artwork import download_artwork
 from .media import Media, Pending
 from .track import PendingTrack
@@ -88,9 +88,11 @@ class PendingAlbum(Pending):
             sep = self.config.session.metadata.artist_separator
             if not isinstance(sep, str) or not sep:
                 logger.warning(
-                    "artist_separator config value is missing or invalid (%r); falling back to ', '", sep
+                    "artist_separator config value is missing or invalid (%r); falling back to %r",
+                    sep,
+                    DEFAULT_ARTIST_SEPARATOR,
                 )
-                sep = ", "
+                sep = DEFAULT_ARTIST_SEPARATOR
             meta = AlbumMetadata.from_album_resp(resp, self.client.source, sep)
         except Exception as e:
             logger.error(f"Error building album metadata for id={self.id}: {e}")
