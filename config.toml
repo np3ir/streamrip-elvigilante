@@ -24,6 +24,8 @@ verify_ssl = true
 max_retries = 3
 # Base delay in seconds for exponential backoff between retries
 retry_delay = 2.0
+# Maximum wait time in seconds between retries (caps exponential backoff)
+max_wait = 60.0
 
 [qobuz]
 # 1: 320kbps MP3, 2: 16/44.1, 3: 24/<=96, 4: 24/>=96

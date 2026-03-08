@@ -134,6 +134,8 @@ class DownloadsConfig:
     max_retries: int = 3
     # Tiempo base en segundos para el backoff exponencial entre reintentos
     retry_delay: float = 2.0
+    # Tiempo máximo de espera entre reintentos (segundos) — limita el backoff exponencial
+    max_wait: float = 60.0
 
 
 @dataclass(slots=True)
@@ -207,6 +209,12 @@ class ConfigData:
             dl_data["max_retries"] = 3
         if "retry_delay" not in dl_data:
             dl_data["retry_delay"] = 2.0
+        if "max_wait" not in dl_data:
+            dl_data["max_wait"] = 60.0
+        # Ensure max_retries is non-negative; negative values silently skip downloads
+        if int(dl_data["max_retries"]) < 0:
+            logger.warning("max_retries cannot be negative (%d); resetting to 0.", dl_data["max_retries"])
+            dl_data["max_retries"] = 0
 
         downloads = DownloadsConfig(**dl_data)  # type: ignore
 
