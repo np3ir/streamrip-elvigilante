@@ -162,6 +162,8 @@ class Main:
 
         for w in workers:
             w.cancel()
+        # Await cancellations so workers release file handles before cleanup
+        await asyncio.gather(*workers, return_exceptions=True)
 
         # Clean end summary
         if self.skipped_items > 5:

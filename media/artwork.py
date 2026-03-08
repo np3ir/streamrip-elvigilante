@@ -1,8 +1,10 @@
+import atexit
 import asyncio
 import logging
 import os
 import shutil
-import time  # Important for retry logic
+import stat
+import time
 
 import aiohttp
 from PIL import Image
@@ -16,40 +18,58 @@ _artwork_tempdirs: set[str] = set()
 logger = logging.getLogger("streamrip")
 
 
+def _force_remove_readonly(func, path, _excinfo):
+    """onerror handler for shutil.rmtree: clear read-only bit and retry.
+
+    On Windows, downloaded files can be temporarily marked read-only by the
+    OS or AV software. This handler unsets the read-only bit before retrying
+    the failed remove operation.
+    """
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except Exception:
+        pass  # best-effort; ignore if still fails
+
+
 def remove_artwork_tempdirs():
-    """
-    Attempts to remove temporary artwork directories.
-    Includes retry logic to avoid [WinError 32] on Windows.
-    """
-    logger.debug("Removing dirs %s", _artwork_tempdirs)
+    """Remove temporary artwork directories created during embedding.
 
-    dirs_to_remove = list(_artwork_tempdirs)
+    Uses an onerror handler to clear read-only bits on Windows, and retries
+    up to 5 times with exponential back-off to survive brief AV/Defender
+    file locks that occur right after a file is written to disk.
+    """
+    logger.debug("Removing artwork temp dirs: %s", _artwork_tempdirs)
 
-    for path in dirs_to_remove:
-        # Attempt up to 3 times to delete the folder
-        for attempt in range(3):
+    for path in list(_artwork_tempdirs):
+        for attempt in range(5):
             try:
                 if os.path.exists(path):
-                    shutil.rmtree(path)
-                # If we reach here, it was deleted or didn't exist.
-                # Remove it from the global set if possible (optional, but clean)
-                if path in _artwork_tempdirs:
-                    _artwork_tempdirs.remove(path)
-                break  # Success, exit the retry loop
+                    shutil.rmtree(path, onerror=_force_remove_readonly)
+                _artwork_tempdirs.discard(path)
+                break  # deleted (or never existed)
 
             except FileNotFoundError:
-                break  # Already gone, job done
+                _artwork_tempdirs.discard(path)
+                break
 
-            except PermissionError:
-                # Windows locked the file. Wait a bit.
-                if attempt < 2:
-                    time.sleep(0.5)
+            except (PermissionError, OSError):
+                if attempt < 4:
+                    time.sleep(0.3 * (2 ** attempt))  # 0.3s, 0.6s, 1.2s, 2.4s
                 else:
-                    logger.warning(f"Could not remove temp artwork dir after 3 retries: {path}")
+                    logger.warning(
+                        "Could not remove temp artwork dir after 5 retries: %s", path
+                    )
 
             except Exception as e:
-                logger.warning(f"Error removing artwork tempdir {path}: {e}")
+                logger.warning("Error removing artwork tempdir %s: %s", path, e)
                 break
+
+
+# Belt-and-suspenders: also clean up at process exit in case __aexit__ is
+# skipped (e.g. KeyboardInterrupt or unhandled exception outside the
+# async with block).
+atexit.register(remove_artwork_tempdirs)
 
 
 async def download_artwork(
