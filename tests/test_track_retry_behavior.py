@@ -80,7 +80,16 @@ def _make_track(downloads_config: DownloadsConfig) -> Track:
 
 
 class _FailingDownloadable:
-    """Downloadable that raises `aiohttp.ClientError` a fixed number of times."""
+    """
+    Downloadable that raises `aiohttp.ClientError` a fixed number of times.
+
+    Exposes the same interface attributes (``source``, ``extension``) as a real
+    Downloadable so that the ``set_failed`` path in ``Track.download`` never
+    raises ``AttributeError`` when retries are exhausted.
+    """
+
+    source: str = "qobuz"
+    extension: str = "flac"
 
     def __init__(self, failures: int):
         self.failures = failures
