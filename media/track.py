@@ -155,7 +155,8 @@ class PendingTrack(Pending):
             else: resp = await self.client.get_metadata(self.id, "track")
         except NonStreamableError: return None
 
-        try: meta = TrackMetadata.from_resp(self.album, source, resp)
+        sep = self.config.session.metadata.artist_separator
+        try: meta = TrackMetadata.from_resp(self.album, source, resp, sep)
         except Exception: return None
         if meta is None:
             self.db.set_failed(source, "track", self.id)
@@ -205,9 +206,10 @@ class PendingSingle(Pending):
     async def resolve(self) -> Track | None:
         try: resp = await self.client.get_metadata(self.id, "track")
         except NonStreamableError: return None
+        sep = self.config.session.metadata.artist_separator
         try:
-            album = AlbumMetadata.from_track_resp(resp, self.client.source)
-            meta = TrackMetadata.from_resp(album, self.client.source, resp)
+            album = AlbumMetadata.from_track_resp(resp, self.client.source, sep)
+            meta = TrackMetadata.from_resp(album, self.client.source, resp, sep)
         except Exception: return None
         if album is None or meta is None: return None
 
