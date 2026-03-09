@@ -29,7 +29,7 @@ from ..metadata import (
 from ..utils.ssl_utils import get_aiohttp_connector_kwargs
 from .artwork import download_artwork
 from .media import Media, Pending
-from .track import Track
+from .track import Track, _fetch_lrc
 
 logger = logging.getLogger("streamrip")
 
@@ -181,14 +181,7 @@ class PendingPlaylistTrack(Pending):
             self.db.set_failed(self.client.source, "track", self.id)
             return None
 
-        # Fetch LRC lyrics if enabled and the client supports it
-        lrc_content: str | None = None
-        if self.config.session.lyrics.save_lrc and hasattr(self.client, "get_lyrics"):
-            try:
-                lrc_content = await self.client.get_lyrics(self.id)
-            except Exception as e:
-                logger.debug("Could not fetch lyrics for playlist track %s: %s", self.id, e)
-
+        lrc_content = await _fetch_lrc(self.client, self.id, self.config)
         return Track(
             meta,
             downloadable,

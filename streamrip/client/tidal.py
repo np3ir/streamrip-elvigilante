@@ -431,9 +431,13 @@ class TidalClient(Client):
             except (TypeError, ValueError):
                 start_ms = 0
             words = line.get("words", "")
+            # Pure integer arithmetic avoids floating-point rounding artifacts
+            # (e.g. 59999 ms must not produce [MM:60.00] due to float drift)
             minutes = start_ms // 60000
-            seconds = (start_ms % 60000) / 1000
-            lrc_lines.append(f"[{minutes:02d}:{seconds:05.2f}]{words}")
+            remaining_ms = start_ms % 60000
+            seconds = remaining_ms // 1000
+            centiseconds = (remaining_ms % 1000) // 10
+            lrc_lines.append(f"[{minutes:02d}:{seconds:02d}.{centiseconds:02d}]{words}")
         return "\n".join(lrc_lines)
 
     async def _api_post(self, url, data, auth: aiohttp.BasicAuth | None = None) -> dict:
