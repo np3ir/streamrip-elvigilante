@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import re
+import traceback
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -228,6 +229,7 @@ class Playlist(Media):
                 await track.rip()
             except Exception as e:
                 logger.error(f"Error downloading track: {e}")
+                logger.debug(f"Full traceback:\n{traceback.format_exc()}")
 
         batches = self.batch(
             [_resolve_download(track) for track in self.tracks],

@@ -13,6 +13,58 @@ from ..filepath_utils import truncate_filepath_to_max, clean_filename
 logger = logging.getLogger("streamrip")
 
 
+class _Explicit:
+    """Supports tidmon-style format specs: {item.explicit:shortparens}."""
+    def __init__(self, val: bool):
+        self.val = bool(val)
+
+    def __format__(self, fmt: str) -> str:
+        if not self.val:
+            return ""
+        if "shortparens" in fmt:
+            return " (explicit)"
+        if "parens" in fmt:
+            return " (Explicit)"
+        if "upper" in fmt:
+            return "EXPLICIT" if "long" in fmt else "E"
+        return "explicit" if "long" in fmt else "E"
+
+    def __str__(self) -> str:
+        return " (explicit)" if self.val else ""
+
+    def __bool__(self) -> bool:
+        return self.val
+
+
+class _ItemProxy:
+    """Proxy so tidmon-style {item.field} templates work inside streamrip."""
+    __slots__ = (
+        "id", "number", "volume", "title", "safe_title", "title_version",
+        "artist", "safe_artist", "artists", "features", "artists_with_features",
+        "isrc", "version", "copyright", "bpm", "quality", "explicit",
+    )
+
+    def __init__(self, meta: "TrackMetadata") -> None:
+        self.id          = meta.info.id
+        self.number      = meta.tracknumber
+        self.volume      = meta.discnumber
+        self.title       = meta.title or ""
+        self.safe_title  = meta.title or ""
+        self.version     = meta.version or ""
+        # title_version: since version is already appended to meta.title by from_tidal/from_deezer/from_qobuz, just use title directly
+        self.title_version = meta.title or ""
+        self.artist      = meta.artist or ""
+        self.safe_artist = meta.artist or ""
+        self.artists     = meta.artist or ""
+        self.features    = ""
+        self.artists_with_features = meta.artist or ""
+        self.isrc        = meta.isrc or ""
+        self.copyright   = ""
+        self.bpm         = 0
+        self.quality     = ""
+        self.explicit    = _Explicit(meta.info.explicit)
+
+
 @dataclass(slots=True)
 class TrackInfo:
     id: str
@@ -34,11 +86,12 @@ class TrackMetadata:
     composer: str | None
     isrc: str | None = None
     lyrics: str | None = ""
+    version: str | None = None
 
     def format_track_path(self, formatter: str) -> str:
         none_str = "Unknown"
         title_clean = self.title
-        info: dict[str, str | int | float] = {
+        info: dict = {
             "artist": self.artist or none_str,
             "title": title_clean or none_str,
             "albumartist": getattr(self.album, "albumartist", none_str),
@@ -46,6 +99,7 @@ class TrackMetadata:
             "albumcomposer": getattr(self.album, "albumcomposer", none_str),
             "tracknumber": self.tracknumber,
             "explicit": " (explicit)" if self.info.explicit else "",
+            "item": _ItemProxy(self),
         }
 
         # Use imported clean_filename (respects accents, swaps : for ：)
@@ -210,6 +264,9 @@ class TrackMetadata:
         tracknumber = typed(resp.get("trackNumber", 1), int)
         discnumber = typed(resp.get("volumeNumber", 1), int)
         isrc = typed(resp.get("isrc", ""), str | None)
+        version = (resp.get("version") or "").strip() or None
+        if version and version.lower() != "album version" and version.lower() not in title.lower():
+            title = f"{title} ({version})"
 
         # Fix: Handle lyrics safely (sometimes it is a string, sometimes a dict)
         lyrics_raw = resp.get("lyrics")
@@ -244,11 +301,15 @@ class TrackMetadata:
             composer=composer,
             isrc=isrc,
             lyrics=lyrics,
+            version=version,
         )
 
     @classmethod
     def from_deezer(cls, album: AlbumMetadata, resp: dict, artist_separator: str) -> TrackMetadata | None:
         title = typed(resp.get("title", "Unknown Title"), str)
+        version = (resp.get("title_version") or "").strip() or None
+        if version and version.lower() not in title.lower():
+            title = f"{title} ({version})"
         artist_obj = resp.get("artist", {})
         # Use contributors list when available (may contain multiple artists);
         # fall back to the single artist field. artist_separator joins multiple names.
@@ -293,6 +354,7 @@ class TrackMetadata:
             composer=composer,
             isrc=isrc,
             lyrics="",
+            version=version,
         )
 
     @classmethod

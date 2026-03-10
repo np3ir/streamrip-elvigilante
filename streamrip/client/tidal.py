@@ -11,6 +11,7 @@ from json import JSONDecodeError
 import os
 
 import aiohttp
+import click
 from aiohttp import TCPConnector, CookieJar, ClientSession, ClientTimeout
 
 from ..config import Config
@@ -55,6 +56,46 @@ QUALITY_MAP = {
 
 QUALITY_PRIORITY = [3, 2, 1, 0]
 
+# Dedicated token file — separate from config.toml, with restricted permissions
+_TOKEN_FILE = os.path.join(click.get_app_dir("streamrip"), "tidal_token.json")
+
+# Refresh threshold: refresh when less than 1 hour remains (like tiddl)
+_REFRESH_THRESHOLD = 3600
+
+
+class TidalTokenStore:
+    """Persists Tidal tokens to a dedicated JSON file with restricted permissions.
+
+    Keeps tokens out of config.toml so they are not accidentally committed or
+    shared, and sets chmod 0o600 so only the current user can read the file.
+    """
+
+    def __init__(self, path: str = _TOKEN_FILE):
+        self.path = path
+
+    def load(self) -> dict | None:
+        try:
+            with open(self.path) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+
+    def save(self, access_token: str, refresh_token: str, token_expiry: float,
+             user_id: str, country_code: str) -> None:
+        data = {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_expiry": token_expiry,
+            "user_id": user_id,
+            "country_code": country_code,
+        }
+        with open(self.path, "w") as f:
+            json.dump(data, f, indent=2)
+        try:
+            os.chmod(self.path, 0o600)
+        except Exception:
+            pass  # Windows has a different permission model; best-effort only
+
 
 class TidalClient(Client):
     source = "tidal"
@@ -77,9 +118,10 @@ class TidalClient(Client):
         self.rate_limiter = self.get_rate_limiter(safe_rpm)
         self.semaphore = asyncio.Semaphore(safe_conn)
         # --------------------------------------------
-        
+
         self.auth_lock = asyncio.Lock()
         self._flac_downloaded = set()
+        self.token_store = TidalTokenStore()
 
     async def login(self):
         jar = CookieJar(unsafe=True)
@@ -98,10 +140,20 @@ class TidalClient(Client):
             self.session.connector._ssl = False
 
         c = self.config
-        self.token_expiry = float(c.token_expiry) if c.token_expiry else 0
+
+        # Load tokens from dedicated file if available; fall back to config.toml
+        stored = self.token_store.load()
+        if stored:
+            c.access_token  = stored.get("access_token", c.access_token)
+            c.refresh_token = stored.get("refresh_token", c.refresh_token)
+            c.token_expiry  = stored.get("token_expiry", c.token_expiry)
+            c.user_id       = stored.get("user_id", c.user_id)
+            c.country_code  = stored.get("country_code", c.country_code)
+
+        self.token_expiry  = float(c.token_expiry) if c.token_expiry else 0
         self.refresh_token = c.refresh_token
 
-        if self.token_expiry - time.time() < 86400:
+        if self.token_expiry - time.time() < _REFRESH_THRESHOLD:
             if self.refresh_token:
                 await self._refresh_access_token()
         else:
@@ -348,37 +400,61 @@ class TidalClient(Client):
 
     async def _login_by_access_token(self, token: str, user_id: str):
         headers = {"authorization": f"Bearer {token}"}
-        async with self.session.get(f"{API_BASE}/sessions", headers=headers) as _resp: resp = await _resp.json()
-        if resp.get("status", 200) != 200: raise Exception(f"Login failed {resp}")
-        c = self.config; c.user_id = resp["userId"]; c.country_code = resp["countryCode"]; c.access_token = token
+        async with self.session.get(f"{API_BASE}/sessions", headers=headers) as _resp:
+            resp = await _resp.json()
+        if resp.get("status", 200) != 200:
+            raise Exception(f"Login failed {resp}")
+        c = self.config
+        c.user_id = resp["userId"]
+        c.country_code = resp["countryCode"]
+        c.access_token = token
         self._update_authorization_from_config()
+        self._persist_token()
 
     def _update_authorization_from_config(self):
         self.session.headers.update({"authorization": f"Bearer {self.config.access_token}"})
 
+    def _persist_token(self) -> None:
+        """Write current tokens to the dedicated token file immediately."""
+        c = self.config
+        try:
+            self.token_store.save(
+                access_token=c.access_token or "",
+                refresh_token=c.refresh_token or "",
+                token_expiry=float(c.token_expiry) if c.token_expiry else 0,
+                user_id=str(c.user_id or ""),
+                country_code=str(c.country_code or ""),
+            )
+        except Exception as e:
+            logger.warning(f"Could not persist Tidal token: {e}")
+
     async def _refresh_access_token(self):
         async with self.auth_lock:
-            if self.config.token_expiry and (float(self.config.token_expiry) - time.time() > 600): return
+            # Skip if token was already refreshed by a concurrent request
+            if self.config.token_expiry and (float(self.config.token_expiry) - time.time() > _REFRESH_THRESHOLD): return
             logger.info("Refreshing Tidal token...")
             data = {"client_id": CLIENT_ID, "refresh_token": self.refresh_token, "grant_type": "refresh_token", "scope": "r_usr+w_usr+w_sub"}
             try:
-                # --- FIX CRÍTICO: NO USAR SEMÁFORO AQUÍ ---
-                # Usamos self.session.post directamente.
-                # _api_post usa el semáforo, y si todas las conexiones están ocupadas esperando 
-                # que este token se refresque, se produce un bloqueo mutuo (deadlock).
+                # Do NOT use the semaphore here: if all connections are waiting for
+                # this refresh to complete, using the semaphore would deadlock.
                 async with self.session.post(f"{AUTH_URL}/token", data=data, auth=AUTH) as resp:
                     resp_data = await resp.json()
-                
-                if resp_data.get("status", 200) != 200: 
+
+                if resp_data.get("status", 200) != 200:
                     raise Exception(f"Refresh failed: {resp_data}")
-                
+
                 c = self.config
                 c.access_token = resp_data["access_token"]
                 c.token_expiry = resp_data["expires_in"] + time.time()
+                if resp_data.get("refresh_token"):
+                    c.refresh_token = resp_data["refresh_token"]
+                    self.refresh_token = c.refresh_token
                 self._update_authorization_from_config()
+                self._persist_token()
                 logger.info("Token refreshed.")
             except Exception as e:
-                logger.error(f"Refresh failed: {e}"); raise e
+                logger.error(f"Refresh failed: {e}")
+                raise e
 
     async def get_lyrics(self, track_id: str) -> str | None:
         """Fetch timed lyrics for a track and return them in LRC format.
