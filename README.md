@@ -1,3 +1,6 @@
+> [!WARNING]
+> This app is for personal, educational, and archival purposes only. It is not affiliated with Tidal. Users must ensure their use complies with Tidal's terms of service and all applicable local copyright laws. Downloaded content is for personal use and may not be shared or redistributed. The developer assumes no responsibility for misuse of this app.
+
 # Streamrip — ElVigilante Edition
 
 > Fork of [nathom/streamrip](https://github.com/nathom/streamrip) with improved reliability, enhanced security and extended configuration options.
