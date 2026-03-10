@@ -265,7 +265,7 @@ class TrackMetadata:
         discnumber = typed(resp.get("volumeNumber", 1), int)
         isrc = typed(resp.get("isrc", ""), str | None)
         version = (resp.get("version") or "").strip() or None
-        if version and version.lower() != "album version" and version.lower() not in title.lower():
+        if version and version.lower() not in title.lower():
             title = f"{title} ({version})"
 
         # Fix: Handle lyrics safely (sometimes it is a string, sometimes a dict)
