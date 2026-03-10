@@ -52,6 +52,7 @@ class AlbumMetadata:
     lyrics: str | None = None
     purchase_date: str | None = None
     release_date: str = "Unknown"
+    release_type: str = "ALBUM"
 
     def get_genres(self) -> str:
         return ", ".join(self.genre)
@@ -108,6 +109,7 @@ class AlbumMetadata:
             "bit_depth": self.info.bit_depth or none_str,
             "sampling_rate": self.info.sampling_rate or none_str,
             "release_date": release_date_clean or none_str,
+            "release_type": self.release_type,
             "albumartist": artist_clean,
             "title": album_clean,
             "albumcomposer": clean_filename(self.albumcomposer or "") or none_str,
@@ -218,6 +220,7 @@ class AlbumMetadata:
             purchase_date=None,
             tracktotal=tracktotal,
             release_date=release_date,
+            release_type="ALBUM",
         )
 
     @classmethod
@@ -262,6 +265,9 @@ class AlbumMetadata:
             booklets=None,
         )
 
+        tidal_type = resp.get("type", "ALBUM")
+        release_type = tidal_type.upper() if isinstance(tidal_type, str) else "ALBUM"
+
         return AlbumMetadata(
             info=info,
             album=album,
@@ -282,6 +288,7 @@ class AlbumMetadata:
             purchase_date=None,
             tracktotal=tracktotal,
             release_date=release_date,
+            release_type=release_type,
         )
 
     @classmethod
@@ -317,6 +324,9 @@ class AlbumMetadata:
             booklets=None,
         )
 
+        deezer_type = resp.get("record_type", "album")
+        release_type = deezer_type.upper() if isinstance(deezer_type, str) else "ALBUM"
+
         return AlbumMetadata(
             info=info,
             album=album,
@@ -337,6 +347,7 @@ class AlbumMetadata:
             purchase_date=None,
             tracktotal=tracktotal,
             release_date=release_date,
+            release_type=release_type,
         )
 
     @classmethod

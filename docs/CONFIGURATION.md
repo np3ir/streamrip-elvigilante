@@ -277,7 +277,7 @@ Controls how files and folders are named.
 ```toml
 [filepaths]
 add_singles_to_folder = false
-folder_format         = "{albumartist} - {title} ({year}) [{container}] [{bit_depth}B-{sampling_rate}kHz]"
+folder_format         = "{artist_initials}/{albumartist}/({release_date}) {title} [{container}] [{bit_depth}B-{sampling_rate}kHz]"
 track_format          = "{tracknumber:02}. {artist} - {title}{explicit}"
 restrict_characters   = false
 truncate_to           = 120
@@ -353,33 +353,39 @@ max_search_results = 100
 | `{albumcomposer}` | Album composer | `Thomas Bangalter` |
 | `{artist_initials}` | First letter of the artist (A–Z or `#`) | `D` |
 | `{release_date}` | Full release date | `2013-05-17` |
+| `{release_type}` | Release type | `ALBUM`, `EP`, `SINGLE`, `COMPILATION` |
 
 > `{artist_initials}` puts non-Latin characters and symbols under `#`.
+> `{release_type}` is parsed from Tidal and Deezer APIs; defaults to `ALBUM` for Qobuz and SoundCloud.
 
 ### Variables for `track_format`
 
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `{tracknumber}` | Track number | `1` or `{tracknumber:02}` → `01` |
-| `{artist}` | Track artist(s) | `Daft Punk` |
+| `{artist}` | Track artist(s), including featured | `Daft Punk` |
 | `{albumartist}` | Album artist | `Daft Punk` |
-| `{title}` | Track title | `Get Lucky` |
+| `{title}` | Track title (with version if present) | `Get Lucky (Radio Edit)` |
 | `{composer}` | Composer | `Thomas Bangalter` |
 | `{albumcomposer}` | Album composer | `Thomas Bangalter` |
-| `{explicit}` | `(explicit)` or empty string | `(explicit)` |
+| `{explicit}` | ` (explicit)` with leading space, or empty | ` (explicit)` |
 
 ### Example configurations
 
 ```toml
-# Simple artist/album organisation
+# Default: organised by initial → artist → date + album + release type (like tiddl / tidmon)
+folder_format = "{artist_initials}/{albumartist}/({release_date}) {title} ({release_type})"
+track_format  = "{tracknumber:02}. {artist} - {title}{explicit}"
+
+# Simple artist/album organisation (no quality info)
 folder_format = "{albumartist}/{title} ({year})"
 track_format  = "{tracknumber:02}. {title}"
 
-# Quality in folder name
+# Quality in folder name, flat (original streamrip style)
 folder_format = "{albumartist} - {title} ({year}) [{container}]"
 track_format  = "{tracknumber:02}. {artist} - {title}"
 
-# Organised by initial (A/, B/, C/, …)
+# Organised by initial (A/, B/, C/, …), no quality suffix
 folder_format = "{artist_initials}/{albumartist}/{title} ({year})"
 track_format  = "{tracknumber:02}. {title}{explicit}"
 ```

@@ -246,7 +246,7 @@ renumber_playlist_tracks = true
 artist_separator         = ", "   # see Artist separator below
 
 [filepaths]
-folder_format = "{albumartist} - {title} ({year}) [{container}] [{bit_depth}B-{sampling_rate}kHz]"
+folder_format = "{artist_initials}/{albumartist}/({release_date}) {title} ({release_type})"
 track_format  = "{tracknumber:02}. {artist} - {title}{explicit}"
 ```
 

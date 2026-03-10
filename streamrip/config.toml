@@ -170,10 +170,11 @@ artist_separator = ", "
 # template
 add_singles_to_folder = false
 # Available keys: "albumartist", "title", "year", "bit_depth", "sampling_rate",
-# "id", and "albumcomposer"
-folder_format = "{albumartist} - {title} ({year}) [{container}] [{bit_depth}B-{sampling_rate}kHz]"
+# "id", "albumcomposer", "artist_initials", "release_date", "release_type", "artist", and "album"
+folder_format = "{artist_initials}/{albumartist}/({release_date}) {title} ({release_type})"
 # Available keys: "tracknumber", "artist", "albumartist", "composer", "title",
-# and "albumcomposer", "explicit"
+# "albumcomposer", "explicit"
+# Note: {explicit} expands to " (explicit)" (with leading space) or empty string
 track_format = "{tracknumber:02}. {artist} - {title}{explicit}"
 # Only allow printable ASCII characters in filenames.
 restrict_characters = false
