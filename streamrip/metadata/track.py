@@ -8,7 +8,7 @@ from typing import Optional
 
 from .album import AlbumMetadata
 from .util import DEFAULT_ARTIST_SEPARATOR, safe_get, typed
-from ..filepath_utils import truncate_filepath_to_max, clean_filename
+from ..filepath_utils import truncate_filepath_to_max, clean_filename, clean_track_title
 
 logger = logging.getLogger("streamrip")
 
@@ -45,14 +45,28 @@ class _ItemProxy:
     )
 
     def __init__(self, meta: "TrackMetadata") -> None:
+        ver = meta.version or ""
+        raw_title = meta.title or ""
+
+        # Strip version suffix if it was already embedded in title
+        # so {item.title} is always the clean title without version — matching tiddl.
+        if ver and raw_title.endswith(f" ({ver})"):
+            clean_title = raw_title[: -len(f" ({ver})")]
+        else:
+            clean_title = raw_title
+
+        # Remove (feat. X) / (with X) from title when X is already captured
+        # in the artist string — matching tiddl's clean_track_title behaviour.
+        clean_title = clean_track_title(clean_title, meta.artist or "")
+
         self.id          = meta.info.id
         self.number      = meta.tracknumber
         self.volume      = meta.discnumber
-        self.title       = meta.title or ""
-        self.safe_title  = meta.title or ""
-        self.version     = meta.version or ""
-        # title_version: since version is already appended to meta.title by from_tidal/from_deezer/from_qobuz, just use title directly
-        self.title_version = meta.title or ""
+        self.title       = clean_title
+        self.safe_title  = clean_title
+        self.version     = ver
+        # title_version = "Title (Version)" when version exists, else just title.
+        self.title_version = f"{clean_title} ({ver})" if ver else clean_title
         self.artist      = meta.artist or ""
         self.safe_artist = meta.artist or ""
         self.artists     = meta.artist or ""
@@ -258,7 +272,17 @@ class TrackMetadata:
     @classmethod
     def from_tidal(cls, album: AlbumMetadata, resp: dict, artist_separator: str) -> TrackMetadata | None:
         title = typed(resp.get("title", "Unknown Title"), str)
-        artist = artist_separator.join(a["name"] for a in resp.get("artists", [])) or "Unknown Artist"
+        # Separate MAIN vs FEATURED artists, sort each group alphabetically — matching tiddl.
+        artists_raw = resp.get("artists", [])
+        main_artists = sorted(
+            [a["name"] for a in artists_raw if a.get("type") == "MAIN" or not a.get("type")],
+            key=lambda x: x.casefold(),
+        )
+        featured_artists = sorted(
+            [a["name"] for a in artists_raw if a.get("type") == "FEATURED"],
+            key=lambda x: x.casefold(),
+        )
+        artist = artist_separator.join(main_artists + featured_artists) or "Unknown Artist"
         composer_raw = resp.get("composer")
         composer = typed(composer_raw.get("name") if isinstance(composer_raw, dict) else composer_raw, str | None)
         tracknumber = typed(resp.get("trackNumber", 1), int)

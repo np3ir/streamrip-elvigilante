@@ -231,7 +231,7 @@ class TidalClient(Client):
         elif media_type in ("playlist", "album", "mix"):
             endpoint = f"{url}/items"
             params = {'limit': 100}
-            if media_type == "album": params['includeContributors'] = 'true'
+            if media_type in ("album", "playlist"): params['includeContributors'] = 'true'
 
             fetched_items = await self._turbo_fetch_list(endpoint, params)
             
