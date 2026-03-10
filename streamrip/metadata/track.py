@@ -40,8 +40,9 @@ class _ItemProxy:
     """Proxy so tidmon-style {item.field} templates work inside streamrip."""
     __slots__ = (
         "id", "number", "volume", "title", "safe_title", "title_version",
-        "artist", "safe_artist", "artists", "features", "artists_with_features",
-        "isrc", "version", "copyright", "bpm", "quality", "explicit",
+        "artist", "safe_artist", "artists", "safe_artists", "features",
+        "artists_with_features", "isrc", "version", "copyright", "bpm",
+        "quality", "explicit", "genre",
     )
 
     def __init__(self, meta: "TrackMetadata") -> None:
@@ -59,24 +60,37 @@ class _ItemProxy:
         # in the artist string — matching tiddl's clean_track_title behaviour.
         clean_title = clean_track_title(clean_title, meta.artist or "")
 
+        all_artists   = meta.artist or ""
+        main_only     = meta.main_artists or all_artists
+        featured_only = meta.featured_artists or ""
+
         self.id          = meta.info.id
         self.number      = meta.tracknumber
         self.volume      = meta.discnumber
         self.title       = clean_title
-        self.safe_title  = clean_title
+        self.safe_title  = clean_filename(clean_title)
         self.version     = ver
         # title_version = "Title (Version)" when version exists, else just title.
         self.title_version = f"{clean_title} ({ver})" if ver else clean_title
-        self.artist      = meta.artist or ""
-        self.safe_artist = meta.artist or ""
-        self.artists     = meta.artist or ""
-        self.features    = ""
-        self.artists_with_features = meta.artist or ""
+        self.artist      = all_artists
+        self.safe_artist = clean_filename(all_artists)
+        # {item.artists} = MAIN artists only (matching tiddl)
+        self.artists     = main_only
+        self.safe_artists = clean_filename(main_only)
+        # {item.features} = FEATURED artists only (matching tiddl)
+        self.features    = featured_only
+        # {item.artists_with_features} = all artists (MAIN + FEATURED)
+        self.artists_with_features = all_artists
         self.isrc        = meta.isrc or ""
         self.copyright   = ""
         self.bpm         = 0
         self.quality     = ""
         self.explicit    = _Explicit(meta.info.explicit)
+        # {item.genre} — from album metadata when available
+        try:
+            self.genre = meta.album.get_genres()
+        except Exception:
+            self.genre = ""
 
 
 @dataclass(slots=True)
@@ -94,13 +108,16 @@ class TrackMetadata:
     info: TrackInfo
     title: str
     album: AlbumMetadata
-    artist: str
+    artist: str          # All artists joined (MAIN + FEATURED) — used for audio tags
     tracknumber: int
     discnumber: int
     composer: str | None
     isrc: str | None = None
     lyrics: str | None = ""
     version: str | None = None
+    # Tidal MAIN-only and FEATURED-only artist strings for {item.artists}/{item.features}
+    main_artists: str | None = None
+    featured_artists: str | None = None
 
     def format_track_path(self, formatter: str) -> str:
         none_str = "Unknown"
@@ -122,10 +139,6 @@ class TrackMetadata:
         if not formatted_filename:
             formatted_filename = "Unknown_Track"
 
-        if len(formatted_filename) > 100:
-            base, ext = os.path.splitext(formatted_filename)
-            formatted_filename = base[:100 - len(ext)] + ext
-
         try:
             base_folder = self.album.folder
         except AttributeError:
@@ -133,12 +146,9 @@ class TrackMetadata:
 
         full_path = os.path.join(base_folder, formatted_filename)
 
-        if len(full_path) > 260:
-            max_folder = max(100, 260 - len(formatted_filename) - 1)
-            base_folder = base_folder[:max_folder]
-            full_path = os.path.join(base_folder, formatted_filename)
-
-        logger.debug(f"[DEBUG] Final track path: {full_path} (len={len(full_path)})")
+        # truncate_filepath_to_max uses UTF-8 byte counting (240 bytes default)
+        # matching tiddl's behaviour — no separate char-based limit needed.
+        logger.debug(f"[DEBUG] Final track path: {full_path} (bytes={len(full_path.encode('utf-8'))})")
         return truncate_filepath_to_max(full_path)
 
     @classmethod
@@ -331,6 +341,8 @@ class TrackMetadata:
             isrc=isrc,
             lyrics=lyrics,
             version=version,
+            main_artists=artist_separator.join(main_artists) or None,
+            featured_artists=artist_separator.join(featured_artists) or None,
         )
 
     @classmethod

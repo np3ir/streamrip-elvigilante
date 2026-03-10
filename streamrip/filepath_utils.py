@@ -108,43 +108,100 @@ def clean_filepath(fn: str, restrict: bool = False) -> str:
     return path
 
 
-def truncate_filepath_to_max(path: str, max_length: int = 255) -> str:
-    if len(path) <= max_length:
+def truncate_filepath_to_max(path: str, max_length: int = 240) -> str:
+    """
+    Truncate *path* so that its UTF-8 byte length does not exceed *max_length*.
+    Uses byte counting (like tiddl) instead of character counting, which is
+    correct for Unicode-heavy filenames on Windows / Linux.
+    Default: 240 bytes — safe margin below the 255-byte NTFS component limit.
+    """
+    if len(path.encode("utf-8")) <= max_length:
         return path
 
     dir_path, filename = os.path.split(path)
     base, ext = os.path.splitext(filename)
-
     dir_path = dir_path.rstrip(os.sep)
-    allowed_base_len = max_length - len(dir_path) - len(ext) - 1
 
-    if allowed_base_len <= 0:
-        return path[:max_length]
+    dir_bytes = len(dir_path.encode("utf-8"))
+    ext_bytes = len(ext.encode("utf-8"))
+    sep_byte = 1  # os.sep is always one byte on supported platforms
+    allowed_base_bytes = max_length - dir_bytes - sep_byte - ext_bytes
 
-    base = base[:allowed_base_len]
-    return os.path.join(dir_path, base + ext)
+    if allowed_base_bytes <= 0:
+        # Directory alone is too long — best-effort character truncation
+        return path.encode("utf-8")[:max_length].decode("utf-8", errors="ignore")
+
+    # Truncate base to allowed bytes, then decode safely
+    base_truncated = base.encode("utf-8")[:allowed_base_bytes].decode("utf-8", errors="ignore")
+    return os.path.join(dir_path, base_truncated + ext)
 
 
-# --- NUEVA FUNCIÓN: Lógica unificada para limpiar títulos de canciones ---
-_RE_ANTI_FEAT = re.compile(r"\s*\((?:f(?:ea)?t\.?|with|starring)\s+(.*?)\)", flags=re.IGNORECASE)
-_RE_NORMALIZE = re.compile(r'[\W_]+')
+# ---------------------------------------------------------------------------
+# clean_track_title — port of tiddl's comprehensive implementation.
+# Handles multilingual feat. keywords, parentheses AND dash-separated forms,
+# partial artist lists, and word-boundary matching.
+# ---------------------------------------------------------------------------
 
-def normalize_text(text: str) -> str:
-    if not text: return ""
-    return _RE_NORMALIZE.sub('', text).lower()
+_FEAT_KEYWORDS = (
+    # English / Universal
+    r"f(?:ea)?t(?:\.|uring)?|with|w/|starring|"
+    # Spanish
+    r"con|junto a|"
+    # German / French
+    r"mit|avec|et"
+)
 
-def clean_track_title(track_path: str, artist_name: str) -> str:
+_RE_ANTI_FEAT = re.compile(
+    # Option 1: (feat. X) / [with X] / {starring X} — requires closing bracket
+    r"(?:\s*(?:[\(\[\{])\s*"
+    r"(?:" + _FEAT_KEYWORDS + r")"
+    r"\s+([^)\}\]]+?)\s*(?:[\)\]\}]))"
+    r"|"
+    # Option 2: " - feat. X" or " – with X" — consumes rest of string
+    r"(?:\s+[-\u2013]\s+"
+    r"(?:" + _FEAT_KEYWORDS + r")"
+    r"\s+(.*))",
+    flags=re.IGNORECASE,
+)
+
+
+def clean_track_title(track_title: str, artist_name: str) -> str:
     """
-    Elimina (feat. Artist) del título si el artista ya está en los metadatos principales.
-    Usado tanto en track.py como en playlist.py para consistencia.
+    Remove (feat. X) / (with X) / " - feat. X" from a track title when X is
+    already captured in the artist string.  Handles partial lists: if a feat.
+    block contains both known and unknown artists only the unknown ones are kept.
+    Multilingual keywords: English, Spanish, German, French.
     """
-    match = _RE_ANTI_FEAT.search(track_path)
-    if match:
-        feat_artist = match.group(1)
-        simple_feat = normalize_text(feat_artist)
-        simple_main_artist = normalize_text(artist_name)
-        # Si el artista del feat ya está en el artista principal, borramos el tag del título
-        if len(simple_feat) > 2 and simple_feat in simple_main_artist:
-            return track_path.replace(match.group(0), "").strip()
-    
-    return track_path
+    # Build a normalised list of artist names to compare against
+    meta_artists = [a.strip().lower() for a in artist_name.split(",") if a.strip()]
+
+    def is_known(name: str) -> bool:
+        n = name.strip().lower()
+        if not n:
+            return True
+        if n in meta_artists:
+            return True
+        # Word-boundary match: "Lil" matches inside "Lil Wayne" but not "Lily Allen"
+        pattern = rf"\b{re.escape(n)}\b"
+        return any(re.search(pattern, ma) for ma in meta_artists)
+
+    def replacement(match: re.Match) -> str:
+        full_match = match.group(0)
+        content = match.group(1) or match.group(2)
+        if not content:
+            return full_match
+        # Split by common list separators
+        parts = re.split(
+            r"\s*(?:,|&|\+| and | y | et | und | con | with )\s*",
+            content,
+            flags=re.IGNORECASE,
+        )
+        unknown = [p.strip() for p in parts if p.strip() and not is_known(p)]
+        if not unknown:
+            return ""                              # all artists known → remove block
+        if len(unknown) == len(parts):
+            return full_match                      # none known → keep block intact
+        # Partial match → reconstruct with only unknown artists
+        return full_match.replace(content, ", ".join(unknown))
+
+    return _RE_ANTI_FEAT.sub(replacement, track_title).strip()
