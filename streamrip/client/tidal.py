@@ -25,25 +25,36 @@ API_BASE = "https://api.tidal.com/v1"
 VIDEO_BASE = "https://api.tidalhifi.com/v1"
 AUTH_URL = "https://auth.tidal.com/v1/oauth2"
 
-# Tidal credentials via environment variables.
-# Set TIDAL_CLIENT_ID and TIDAL_CLIENT_SECRET to use your own app credentials:
+# Tidal app credentials.
+# To use your own credentials set TIDAL_CLIENT_ID and TIDAL_CLIENT_SECRET:
 #   export TIDAL_CLIENT_ID=your_id
 #   export TIDAL_CLIENT_SECRET=your_secret
-_BUNDLED_CLIENT_ID = "4N3n6Q1x95LL5K7p"
-_BUNDLED_CLIENT_SECRET = "oKOXfJW371cX6xaZ0PyhgGNBdNLlBZd4AKKYougMjik="
+# If not set, bundled defaults are used (same approach as tiddl).
+_BUNDLED_B64 = "NE4zbjZRMXg5NUxMNUs3cDtvS09YZkpXMzcxY1g2eGFaMFB5aGdHTkJkTkxsQlpkNEFLS1lvdWdNamlrPQ=="
 
-CLIENT_ID = os.environ.get("TIDAL_CLIENT_ID")
-CLIENT_SECRET = os.environ.get("TIDAL_CLIENT_SECRET")
 
-if not CLIENT_ID or not CLIENT_SECRET:
+def _get_client_credentials() -> tuple[str, str]:
+    """Return (client_id, client_secret) from env vars or bundled defaults.
+
+    Mirrors tiddl's ``get_auth_credentials()`` pattern: env vars take priority;
+    bundled defaults (base64-encoded) are used as a fallback so the tool works
+    out of the box without any configuration.
+    """
+    env_id = os.environ.get("TIDAL_CLIENT_ID")
+    env_secret = os.environ.get("TIDAL_CLIENT_SECRET")
+    if env_id and env_secret:
+        return env_id, env_secret
     logger.warning(
         "TIDAL_CLIENT_ID / TIDAL_CLIENT_SECRET not set — using bundled default "
-        "credentials. These are publicly known and may be revoked at any time. "
+        "credentials. These may be revoked at any time. "
         "Set the env vars to use your own Tidal app credentials."
     )
-    CLIENT_ID = CLIENT_ID or _BUNDLED_CLIENT_ID
-    CLIENT_SECRET = CLIENT_SECRET or _BUNDLED_CLIENT_SECRET
+    decoded = base64.b64decode(_BUNDLED_B64).decode()
+    bundled_id, bundled_secret = decoded.split(";", 1)
+    return bundled_id, bundled_secret
 
+
+CLIENT_ID, CLIENT_SECRET = _get_client_credentials()
 AUTH = aiohttp.BasicAuth(login=CLIENT_ID, password=CLIENT_SECRET)
 
 STREAM_URL_REGEX = re.compile(
@@ -480,11 +491,14 @@ class TidalClient(Client):
         return plain.strip() or None
 
     @staticmethod
-    def _subtitles_to_lrc(subtitles_json: str) -> str:
-        """Convert Tidal's subtitle JSON string to LRC format.
+    def _subtitles_to_lrc(subtitles_json: str | list) -> str:
+        """Convert Tidal's subtitle JSON string (or pre-parsed list) to LRC format.
 
-        The input is a JSON-encoded list of objects with ``startTimeMs``
-        (milliseconds as a string or int) and ``words`` (lyric text).
+        The API may return ``subtitles`` as a JSON-encoded string **or** as an
+        already-parsed list.  Both forms are accepted so that ``get_lyrics``
+        always returns a ``str`` regardless of how the API serialises the data.
+
+        Each element must have ``startTimeMs`` (ms as str/int) and ``words``.
 
         Example input::
 
@@ -494,11 +508,20 @@ class TidalClient(Client):
 
             [00:05.53]I'm in love with the world
         """
-        try:
-            lines = json.loads(subtitles_json)
-        except Exception:
-            # If we can't parse it, return raw (better than nothing)
-            return subtitles_json
+        if isinstance(subtitles_json, list):
+            lines = subtitles_json
+        elif isinstance(subtitles_json, str):
+            try:
+                lines = json.loads(subtitles_json)
+            except (json.JSONDecodeError, TypeError):
+                # Not valid JSON — return the raw string (better than nothing)
+                return subtitles_json
+        else:
+            return ""
+
+        if not isinstance(lines, list):
+            # Unexpected shape — convert to string as a last resort
+            return str(lines)
 
         lrc_lines = []
         for line in lines:
