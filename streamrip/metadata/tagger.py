@@ -114,7 +114,12 @@ class Container(Enum):
         else:
             if attr == "genre": return meta.album.get_genres()
             elif attr == "copyright": return meta.album.get_copyright()
-            val = getattr(meta.album, attr)
+            elif attr == "date":
+                # Write year (YYYY) to the DATE/©day field so all tag editors
+                # show just the year — full release date is preserved in folder path.
+                val = meta.album.year
+            else:
+                val = getattr(meta.album, attr)
             if val is None: return None
             return str(val)
 
