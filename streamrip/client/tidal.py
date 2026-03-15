@@ -130,6 +130,7 @@ class TidalClient(Client):
         self._rate_lock = asyncio.Lock()
         self._last_request_time = 0.0
         self._min_interval = 60.0 / safe_rpm  # e.g. 1.0s at 60 RPM
+        self._rate_limit_delay: float = 0.0  # Adaptive: grows on 429, shrinks on success
         # --------------------------------------------
 
         self.auth_lock = asyncio.Lock()
@@ -551,6 +552,10 @@ class TidalClient(Client):
         if "limit" not in params: params["limit"] = 100
 
         for attempt in range(retries + 1):
+            # Adaptive delay from previous 429s
+            if self._rate_limit_delay > 0:
+                await asyncio.sleep(self._rate_limit_delay)
+
             # Fixed interval + small jitter (global, no burst)
             async with self._rate_lock:
                 now = asyncio.get_event_loop().time()
@@ -566,8 +571,9 @@ class TidalClient(Client):
                 try:
                     async with self.session.get(url, params=params, timeout=ClientTimeout(total=30)) as resp:
                         if resp.status == 429:
+                            self._rate_limit_delay = min(5.0, self._rate_limit_delay + 1.0)
                             wait = int(resp.headers.get("Retry-After", 10)) + random.randint(5, 10)
-                            logger.warning(f"Rate Limit hit. Backing off {wait}s...")
+                            logger.warning(f"Rate Limit hit. Backing off {wait}s... (adaptive_delay={self._rate_limit_delay:.1f}s)")
                             await asyncio.sleep(wait)
                             continue
                         if resp.status == 401:
@@ -579,6 +585,7 @@ class TidalClient(Client):
                         if resp.status == 404:
                             raise NonStreamableError("Not Found")
                         resp.raise_for_status()
+                        self._rate_limit_delay = max(0.0, self._rate_limit_delay - 0.1)
                         try:
                             return await resp.json()
                         except:
