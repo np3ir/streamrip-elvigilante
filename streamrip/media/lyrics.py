@@ -1,7 +1,11 @@
+import asyncio
 import logging
+
+import aiohttp
 
 from ..client import Client
 from ..config import Config
+from ..exceptions import NonStreamableError
 
 logger = logging.getLogger("streamrip")
 
@@ -19,6 +23,6 @@ async def fetch_lrc(client: Client, track_id: str, config: Config) -> str | None
         return None
     try:
         return await client.get_lyrics(track_id)  # type: ignore[attr-defined]
-    except Exception as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError, NonStreamableError) as e:
         logger.debug("Could not fetch lyrics for track %s: %s", track_id, e)
         return None
