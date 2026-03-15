@@ -126,8 +126,10 @@ class TidalClient(Client):
         # Allow up to 12 concurrent connections if configured, otherwise default to 2
         safe_conn = max_conn if (0 < max_conn <= 12) else 2
 
-        self.rate_limiter = self.get_rate_limiter(safe_rpm)
         self.semaphore = asyncio.Semaphore(safe_conn)
+        self._rate_lock = asyncio.Lock()
+        self._last_request_time = 0.0
+        self._min_interval = 60.0 / safe_rpm  # e.g. 1.0s at 60 RPM
         # --------------------------------------------
 
         self.auth_lock = asyncio.Lock()
@@ -549,13 +551,16 @@ class TidalClient(Client):
         if "limit" not in params: params["limit"] = 100
 
         for attempt in range(retries + 1):
-            # Jitter outside the semaphore to avoid blocking
-            await asyncio.sleep(random.uniform(1.0, 2.0))
-            
+            # Fixed interval + small jitter (global, no burst)
+            async with self._rate_lock:
+                now = asyncio.get_event_loop().time()
+                elapsed = now - self._last_request_time
+                wait = self._min_interval - elapsed + random.uniform(0, 0.3)
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                self._last_request_time = asyncio.get_event_loop().time()
+
             async with self.semaphore:
-                # Rate limiter
-                if self.rate_limiter:
-                    await self.rate_limiter.acquire()
 
                 url = path if path.startswith("http") else f"{base}/{path}"
                 try:
