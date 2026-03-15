@@ -165,7 +165,7 @@ class AlbumMetadata:
                     names.append(name)
                 else:
                     logger.warning("AlbumMetadata.from_qobuz: artist entry missing/invalid 'name': %r, skipping", a)
-            albumartist = artist_separator.join(names) if names else typed(safe_get(resp, "artist", "name"), str)
+            albumartist = artist_separator.join(sorted(names)) if names else typed(safe_get(resp, "artist", "name"), str)
         else:
             albumartist = typed(safe_get(resp, "artist", "name"), str)
         albumcomposer = typed(safe_get(resp, "composer", "name", default=""), str)
@@ -310,10 +310,10 @@ class AlbumMetadata:
             contributors = contributors_raw.get("data", [])
         else:
             contributors = []
-        main_artists = [
+        main_artists = sorted([
             c["name"] for c in contributors
             if isinstance(c, dict) and isinstance(c.get("name"), str) and c.get("role") == "Main"
-        ]
+        ])
         if main_artists:
             albumartist = artist_separator.join(main_artists)
         else:
@@ -419,7 +419,7 @@ class AlbumMetadata:
         copyright = resp.get("copyright", "")
         artists = resp.get("artists", [])
         albumartist = (
-            artist_separator.join(a["name"] for a in artists)
+            artist_separator.join(sorted(a["name"] for a in artists))
             or album_resp.get("artist", {}).get("name", "Unknown Artist")
         )
         disctotal = resp.get("volumeNumber", 1)
