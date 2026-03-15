@@ -248,7 +248,8 @@ class DeezerClient(Client):
             if isinstance(sync_json, str):
                 try:
                     sync_json = json.loads(sync_json)
-                except (json.JSONDecodeError, TypeError):
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.debug("Failed to parse LYRICS_SYNC_JSON for track %s: %s", track_id, e)
                     sync_json = None
             if isinstance(sync_json, list):
                 lrc = self._sync_to_lrc(sync_json)
