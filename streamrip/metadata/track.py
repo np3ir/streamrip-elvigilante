@@ -347,6 +347,21 @@ class TrackMetadata:
             any_contribs = sorted([c["name"] for c in all_contribs])
             artist = artist_separator.join(any_contribs) if any_contribs else artist_obj.get("name", "Unknown Artist")
             dz_main = [artist] if artist else []
+            # Playlist tracks: Deezer omits 'contributors' — only 'artist' (main) returned.
+            # Recover featured artist by parsing the title (e.g. "Song (feat. Artist B)").
+            if not any_contribs:
+                feat_match = re.search(
+                    r'\(\s*(?:feat\.?|ft\.?|featuring)\s+([^)]+)\)', title, re.IGNORECASE
+                ) or re.search(
+                    r'(?:^|\s)(?:feat\.?|ft\.?|featuring)\s+(.+?)(?:\s*[-\u2013(]|$)', title, re.IGNORECASE
+                )
+                if feat_match:
+                    feat_raw = feat_match.group(1).strip().rstrip(")")
+                    feat_parts = [p.strip() for p in re.split(r'\s*[&,]\s*|\s+y\s+', feat_raw) if p.strip()]
+                    extra = [p for p in feat_parts if p.lower() != artist.lower()]
+                    if extra:
+                        logger.debug("Playlist track missing contributors — recovered feat artist(s) from title: %s", extra)
+                        artist = artist_separator.join([artist] + extra)
         tracknumber = typed(resp.get("track_position", 1), int)
         discnumber = typed(resp.get("disk_number", 1), int)
         isrc = typed(resp.get("isrc"), str | None)

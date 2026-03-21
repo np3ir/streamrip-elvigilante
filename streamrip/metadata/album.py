@@ -310,15 +310,9 @@ class AlbumMetadata:
             contributors = contributors_raw.get("data", [])
         else:
             contributors = []
-        main_artists = sorted([
-            c["name"] for c in contributors
-            if isinstance(c, dict) and isinstance(c.get("name"), str) and c.get("role") == "Main"
-        ])
-        if main_artists:
-            albumartist = artist_separator.join(main_artists)
-        else:
-            artist_obj = resp.get("artist", {})
-            albumartist = artist_obj.get("name", "Unknown Artist") if isinstance(artist_obj, dict) else "Unknown Artist"
+        # Folder uses only the primary artist (artist.name field from Deezer API).
+        artist_obj = resp.get("artist", {})
+        albumartist = artist_obj.get("name", "Unknown Artist") if isinstance(artist_obj, dict) else "Unknown Artist"
         genres_data = resp.get("genres", {}).get("data", [])
         genres = [g["name"] for g in genres_data]
         label = resp.get("label")

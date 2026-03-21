@@ -133,6 +133,10 @@ class BasicDownloadable(Downloadable):
         await fast_async_download(path, self.url, self.session.headers, callback, session=self.session)
 
 
+DEEZER_MAX_RETRIES = 3
+DEEZER_RETRY_DELAY = 2  # seconds, multiplied by attempt number
+
+
 class DeezerDownloadable(Downloadable):
     is_encrypted = re.compile("/m(?:obile|edia)/")
 
@@ -158,7 +162,27 @@ class DeezerDownloadable(Downloadable):
         self.id = str(info["id"])
 
     async def _download(self, path: str, callback):
-        # with requests.Session().get(self.url, allow_redirects=True) as resp:
+        """Download with automatic retry on network errors (deemix technique)."""
+        last_error: Exception = None
+        for attempt in range(DEEZER_MAX_RETRIES):
+            try:
+                await self._attempt_download(path, callback)
+                return
+            except (aiohttp.ClientError, aiohttp.ServerDisconnectedError, asyncio.TimeoutError) as e:
+                last_error = e
+                if attempt < DEEZER_MAX_RETRIES - 1:
+                    wait = DEEZER_RETRY_DELAY * (attempt + 1)
+                    logger.warning("Deezer download error on attempt %d/%d: %s. Retrying in %ds...", attempt + 1, DEEZER_MAX_RETRIES, e, wait)
+                    try:
+                        if os.path.isfile(path):
+                            os.remove(path)
+                    except OSError:
+                        pass
+                    await asyncio.sleep(wait)
+        raise NonStreamableError(f"Download failed after {DEEZER_MAX_RETRIES} attempts: {last_error}")
+
+    async def _attempt_download(self, path: str, callback):
+        """Single download attempt (called by _download retry wrapper)."""
         async with self.session.get(
             self.url,
             allow_redirects=True,
@@ -187,13 +211,20 @@ class DeezerDownloadable(Downloadable):
                 blowfish_key = self._generate_blowfish_key(self.id)
                 logger.debug(
                     "Deezer file (id %s) at %s is encrypted. Decrypting with %s",
-                    self.id,
-                    self.url,
-                    blowfish_key,
+                    self.id, self.url, blowfish_key,
                 )
 
                 buf = bytearray()
+                is_first_chunk = True
                 async for data, _ in resp.content.iter_chunks():
+                    # Strip leading null bytes from first chunk (deemix technique)
+                    if is_first_chunk and len(data) > 0 and data[0] == 0 and data[4:8] != b"ftyp":
+                        strip_at = 0
+                        for strip_at, byte in enumerate(data):
+                            if byte != 0:
+                                break
+                        data = data[strip_at:]
+                        is_first_chunk = False
                     buf += data
                     callback(len(data))
 

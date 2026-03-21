@@ -137,8 +137,35 @@ class DeezerClient(Client):
             asyncio.to_thread(self.client.api.get_playlist, item_id),
             asyncio.to_thread(self.client.api.get_playlist_tracks, item_id),
         )
-        pl_metadata["tracks"] = pl_tracks["data"]
-        pl_metadata["track_total"] = len(pl_tracks["data"])
+        tracks = pl_tracks["data"]
+
+        # Enrich each track with contributors from the GW API (concurrent).
+        # The public playlist/tracks endpoint omits 'contributors', so co-artists
+        # without 'feat.' in the title (e.g. Beele on "ALGO TU") would be lost.
+        async def _enrich(track: dict) -> dict:
+            if track.get("contributors"):
+                return track
+            track_id = str(track.get("id", ""))
+            if not track_id:
+                return track
+            try:
+                gw = await asyncio.to_thread(self.client.gw.get_track, track_id)
+                sng = gw.get("SNG_CONTRIBUTORS", {})
+                contributors = []
+                for name in sng.get("main_artist", []):
+                    contributors.append({"name": name, "role": "Main"})
+                for name in sng.get("featuring", []):
+                    contributors.append({"name": name, "role": "Featured"})
+                if contributors:
+                    track = dict(track)
+                    track["contributors"] = contributors
+            except Exception as e:
+                logger.debug("Could not enrich track %s with GW contributors: %s", track_id, e)
+            return track
+
+        enriched = await asyncio.gather(*[_enrich(t) for t in tracks])
+        pl_metadata["tracks"] = list(enriched)
+        pl_metadata["track_total"] = len(enriched)
         return pl_metadata
 
     async def get_artist(self, item_id: str) -> dict:
@@ -211,10 +238,16 @@ class DeezerClient(Client):
             )
         except deezer.WrongGeolocation:
             if not is_retry and fallback_id:
+                logger.warning("Track %s unavailable due to geolocation, trying fallback %s", item_id, fallback_id)
                 return await self.get_downloadable(fallback_id, quality, is_retry=True)
             raise NonStreamableError(
                 "The requested track is not available. This may be due to your country/location.",
             )
+        except Exception as e:
+            if not is_retry and fallback_id:
+                logger.warning("URL fetch failed for track %s (%s), trying fallback %s", item_id, e, fallback_id)
+                return await self.get_downloadable(fallback_id, quality, is_retry=True)
+            raise NonStreamableError(f"Could not get download URL for track {item_id}: {e}")
 
         if url is None:
             url = self._get_encrypted_file_url(
