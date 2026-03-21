@@ -196,12 +196,12 @@ async def url(ctx, urls):
                 latest_version, notes = await version_coro
                 if latest_version != __version__:
                     console.print(
-                        f"\n[green]A new version of streamrip [cyan]v{latest_version}[/cyan]"
-                        " is available! Run [white][bold]pip3 install streamrip --upgrade[/bold][/white]"
+                        f"\n[green]A new version of streamrip-elvigilante [cyan]v{latest_version}[/cyan]"
+                        " is available! Run [white][bold]pip3 install git+https://github.com/Np3ir/streamrip-elvigilante --upgrade[/bold][/white]"
                         " to update.[/green]\n"
                     )
-
-                    console.print(Markdown(notes))
+                    if notes:
+                        console.print(Markdown(notes))
 
     except aiohttp.ClientConnectorCertificateError as e:
         from ..utils.ssl_utils import print_ssl_error_help
@@ -449,7 +449,7 @@ async def id(ctx, source, media_type, id):
 
 
 async def latest_streamrip_version(verify_ssl: bool = True) -> tuple[str, str | None]:
-    """Get the latest streamrip version from PyPI and release notes from GitHub.
+    """Get the latest streamrip-elvigilante version from the fork's GitHub releases.
 
     Args:
         verify_ssl: Whether to verify SSL certificates
@@ -457,24 +457,29 @@ async def latest_streamrip_version(verify_ssl: bool = True) -> tuple[str, str | 
     Returns:
         A tuple of (version, release_notes)
     """
-    # Create connector with appropriate SSL settings
     connector_kwargs = get_aiohttp_connector_kwargs(verify_ssl=verify_ssl)
     connector = aiohttp.TCPConnector(**connector_kwargs)
 
-    async with aiohttp.ClientSession(connector=connector) as s:
-        async with s.get("https://pypi.org/pypi/streamrip/json") as resp:
-            data = await resp.json()
-        version = data["info"]["version"]
+    try:
+        async with aiohttp.ClientSession(connector=connector) as s:
+            async with s.get(
+                "https://api.github.com/repos/Np3ir/streamrip-elvigilante/releases/latest",
+                headers={"Accept": "application/vnd.github+json"},
+            ) as resp:
+                if resp.status != 200:
+                    return __version__, None
+                data = await resp.json()
 
-        if version == __version__:
-            return version, None
+        # tag_name is typically "v2.2.5" — strip leading "v"
+        tag = data.get("tag_name", "").lstrip("v")
+        if not tag:
+            return __version__, None
 
-        async with s.get(
-            "https://api.github.com/repos/nathom/streamrip/releases/latest"
-        ) as resp:
-            json = await resp.json()
-        notes = json["body"]
-    return version, notes
+        notes = data.get("body") or None
+        return tag, notes
+    except Exception:
+        # Never crash the whole session over an update check
+        return __version__, None
 
 
 if __name__ == "__main__":
