@@ -218,15 +218,22 @@ class DeezerDownloadable(Downloadable):
                 is_first_chunk = True
                 async for data, _ in resp.content.iter_chunks():
                     # Strip leading null bytes from first chunk (deemix technique)
-                    if is_first_chunk and len(data) > 0 and data[0] == 0 and data[4:8] != b"ftyp":
-                        strip_at = 0
-                        for strip_at, byte in enumerate(data):
-                            if byte != 0:
-                                break
-                        data = data[strip_at:]
+                    if is_first_chunk:
+                        if len(data) > 0 and data[0] == 0 and data[4:8] != b"ftyp":
+                            strip_at = 0
+                            for strip_at, byte in enumerate(data):
+                                if byte != 0:
+                                    break
+                            data = data[strip_at:]
                         is_first_chunk = False
                     buf += data
                     callback(len(data))
+
+                # Verify we got the full file (allows small tolerance for null byte stripping)
+                if self._size > 0 and len(buf) < self._size * 0.99:
+                    raise aiohttp.ClientPayloadError(
+                        f"Incomplete download: got {len(buf)} of {self._size} bytes"
+                    )
 
                 encrypt_chunk_size = 3 * 2048
                 async with aiofiles.open(path, "wb") as audio:
