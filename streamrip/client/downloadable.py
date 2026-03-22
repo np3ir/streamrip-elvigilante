@@ -162,26 +162,28 @@ class DeezerDownloadable(Downloadable):
         self.id = str(info["id"])
 
     async def _download(self, path: str, callback):
-        """Download with automatic retry on network errors (deemix technique)."""
+        """Download with .part file and automatic retry on network errors."""
+        part_path = path + ".part"
         last_error: Exception = None
         for attempt in range(DEEZER_MAX_RETRIES):
             try:
-                # 5-minute total timeout per attempt prevents infinite stalls
+                # Download to .part file; rename to final path only on success
                 await asyncio.wait_for(
-                    self._attempt_download(path, callback),
+                    self._attempt_download(part_path, callback),
                     timeout=300,
                 )
+                os.replace(part_path, path)
                 return
             except (aiohttp.ClientError, aiohttp.ServerDisconnectedError, asyncio.TimeoutError) as e:
                 last_error = e
+                try:
+                    if os.path.isfile(part_path):
+                        os.remove(part_path)
+                except OSError:
+                    pass
                 if attempt < DEEZER_MAX_RETRIES - 1:
                     wait = DEEZER_RETRY_DELAY * (attempt + 1)
                     logger.warning("Deezer download error on attempt %d/%d: %s. Retrying in %ds...", attempt + 1, DEEZER_MAX_RETRIES, e, wait)
-                    try:
-                        if os.path.isfile(path):
-                            os.remove(path)
-                    except OSError:
-                        pass
                     await asyncio.sleep(wait)
         raise NonStreamableError(f"Download failed after {DEEZER_MAX_RETRIES} attempts: {last_error}")
 
