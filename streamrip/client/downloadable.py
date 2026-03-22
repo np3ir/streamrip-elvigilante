@@ -168,10 +168,7 @@ class DeezerDownloadable(Downloadable):
         for attempt in range(DEEZER_MAX_RETRIES):
             try:
                 # Download to .part file; rename to final path only on success
-                await asyncio.wait_for(
-                    self._attempt_download(part_path, callback),
-                    timeout=300,
-                )
+                await self._attempt_download(part_path, callback)
                 os.replace(part_path, path)
                 return
             except (aiohttp.ClientError, aiohttp.ServerDisconnectedError, asyncio.TimeoutError) as e:
@@ -192,7 +189,7 @@ class DeezerDownloadable(Downloadable):
         async with self.session.get(
             self.url,
             allow_redirects=True,
-            timeout=aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=60),
+            timeout=aiohttp.ClientTimeout(total=600, sock_connect=30, sock_read=60),
         ) as resp:
             resp.raise_for_status()
             content_length = int(resp.headers.get("Content-Length", 0))
