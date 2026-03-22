@@ -6,6 +6,91 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.2.8] — ElVigilante Edition
+
+### Added
+
+- **UPC metadata support** (`metadata/album.py`, `metadata/tagger.py`)
+  — `AlbumMetadata` now includes a `upc` field; the tagger embeds it in downloaded files.
+
+### Fixed
+
+- **Long album folder names** (`media/album.py`)
+  — Folder names exceeding 150 characters are now truncated to prevent "path too long"
+  errors on Windows and network shares.
+
+---
+
+## [2.2.7] — ElVigilante Edition
+
+### Fixed
+
+- **Tidal URLs with `/u` suffix** (`rip/parse_url.py`)
+  — URLs like `tidal.com/track/123/u` no longer break the URL regex parser.
+
+- **Deezer dynamic link format** (`rip/parse_url.py`)
+  — Added support for `link.deezer.com/s/...` short links in addition to
+  the existing `deezer.page.link/...` format.
+
+---
+
+## [2.2.6] — ElVigilante Edition
+
+### Added
+
+- **Tidal `HI_RES_LOSSLESS` quality** (`client/tidal.py`)
+  — Quality level 4 (`HI_RES_LOSSLESS` / FLAC Best) added to `QUALITY_MAP`.
+
+### Fixed
+
+- **Deezer URL redirects** (`client/deezer.py`)
+  — Added `_resolve_redirect()`: when Deezer returns `DataException` for a moved
+  album, playlist, or artist, streamrip now follows the redirect automatically
+  and retries with the new ID.
+
+---
+
+## [2.2.5] — ElVigilante Edition
+
+### Added
+
+- **Playlist contributor enrichment via GW API** (`client/deezer.py`)
+  — Playlist tracks are enriched concurrently using Deezer's internal GW API
+  (`SNG_CONTRIBUTORS`) to recover featured artists omitted by the public endpoint.
+
+- **Deezer download retry with `.part` files** (`client/downloadable.py`)
+  — Failed downloads retry up to 3 times with exponential back-off. Files are
+  written to a `.part` temporary path and renamed on success, so incomplete files
+  are never left on disk.
+
+- **Null-byte stripping** (`client/downloadable.py`)
+  — Leading null bytes in the first encrypted chunk are stripped before decryption,
+  fixing corrupted files on certain CDN responses.
+
+### Fixed
+
+- **Album artist uses only primary artist** (`metadata/album.py`)
+  — `albumartist` / folder name now uses `artist.name` (primary) instead of a
+  sorted multi-artist list, preventing "Beele / Shakira" style folder names.
+
+- **Feat artist recovery from title** (`metadata/track.py`)
+  — When `contributors` is missing and the title contains `(feat. …)`, the
+  featured artists are parsed out and appended to the track artist field.
+
+- **Geolocation fallback** (`client/deezer.py`)
+  — Any download URL failure (not only `WrongGeolocation`) now triggers the
+  fallback track ID retry.
+
+- **UTF-8 console output on Windows** (`rip/cli.py`)
+  — Forces UTF-8 encoding on startup to prevent `UnicodeEncodeError` for tracks
+  with fullwidth or special characters in their filenames.
+
+- **Version checker points to fork** (`rip/cli.py`)
+  — Update notifications now check `Np3ir/streamrip-elvigilante` releases instead
+  of the upstream PyPI package.
+
+---
+
 ## [2.2.4] — ElVigilante Edition
 
 ### Fixed
