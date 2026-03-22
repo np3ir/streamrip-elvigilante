@@ -189,8 +189,11 @@ class DeezerDownloadable(Downloadable):
             timeout=aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=60),
         ) as resp:
             resp.raise_for_status()
-            self._size = int(resp.headers.get("Content-Length", 0))
-            if self._size < 20000 and not self.url.endswith(".jpg"):
+            content_length = int(resp.headers.get("Content-Length", 0))
+            if content_length > 0:
+                self._size = content_length  # Use accurate header size when available
+            # else: keep self._size from quality_to_size as fallback for completeness check
+            if content_length < 20000 and not self.url.endswith(".jpg"):
                 try:
                     info = await resp.json()
                     try:
