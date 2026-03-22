@@ -166,7 +166,11 @@ class DeezerDownloadable(Downloadable):
         last_error: Exception = None
         for attempt in range(DEEZER_MAX_RETRIES):
             try:
-                await self._attempt_download(path, callback)
+                # 5-minute total timeout per attempt prevents infinite stalls
+                await asyncio.wait_for(
+                    self._attempt_download(path, callback),
+                    timeout=300,
+                )
                 return
             except (aiohttp.ClientError, aiohttp.ServerDisconnectedError, asyncio.TimeoutError) as e:
                 last_error = e
