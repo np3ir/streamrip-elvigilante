@@ -51,6 +51,7 @@ class AlbumMetadata:
     grouping: str | None = None
     lyrics: str | None = None
     purchase_date: str | None = None
+    upc: str | None = None
     release_date: str = "Unknown"
     release_type: str = "ALBUM"
 

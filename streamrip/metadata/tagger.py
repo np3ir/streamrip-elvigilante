@@ -34,7 +34,7 @@ METADATA_TYPES = (
     "title", "artist", "album", "albumartist", "composer", "year", "comment",
     "description", "purchase_date", "grouping", "genre", "lyrics", "encoder",
     "copyright", "compilation", "tracknumber", "discnumber", "tracktotal",
-    "disctotal", "date", "isrc",
+    "disctotal", "date", "isrc", "upc",
 )
 
 FLAC_KEY = {v: v.upper() for v in METADATA_TYPES}
