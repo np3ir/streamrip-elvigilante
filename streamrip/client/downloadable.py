@@ -242,19 +242,23 @@ class DeezerDownloadable(Downloadable):
                         f"Incomplete download: got {received} of {self._size} bytes"
                     )
 
+                # Decrypt entire buffer in a thread (CPU-bound), then single write
                 encrypt_chunk_size = 3 * 2048
-                async with aiofiles.open(path, "wb") as audio:
-                    buflen = len(buf)
+
+                def _decrypt_buffer(raw: bytearray) -> bytearray:
+                    out = bytearray()
+                    buflen = len(raw)
                     for i in range(0, buflen, encrypt_chunk_size):
-                        data = buf[i : min(i + encrypt_chunk_size, buflen)]
-                        if len(data) >= 2048:
-                            decrypted_chunk = (
-                                self._decrypt_chunk(blowfish_key, data[:2048])
-                                + data[2048:]
-                            )
+                        chunk = raw[i : min(i + encrypt_chunk_size, buflen)]
+                        if len(chunk) >= 2048:
+                            out += self._decrypt_chunk(blowfish_key, chunk[:2048]) + chunk[2048:]
                         else:
-                            decrypted_chunk = data
-                        await audio.write(decrypted_chunk)
+                            out += chunk
+                    return out
+
+                decrypted = await asyncio.to_thread(_decrypt_buffer, buf)
+                async with aiofiles.open(path, "wb") as audio:
+                    await audio.write(decrypted)
 
     @staticmethod
     def _decrypt_chunk(key, data):
