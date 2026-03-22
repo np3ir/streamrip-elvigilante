@@ -232,10 +232,11 @@ class DeezerDownloadable(Downloadable):
                     buf += data
                     callback(len(data))
 
+                received = len(buf)
                 # Verify we got the full file (allows small tolerance for null byte stripping)
-                if self._size > 0 and len(buf) < self._size * 0.99:
+                if self._size > 0 and received < self._size * 0.99:
                     raise aiohttp.ClientPayloadError(
-                        f"Incomplete download: got {len(buf)} of {self._size} bytes"
+                        f"Incomplete download: got {received} of {self._size} bytes"
                     )
 
                 encrypt_chunk_size = 3 * 2048
