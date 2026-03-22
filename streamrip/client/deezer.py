@@ -4,8 +4,11 @@ import hashlib
 import json
 import logging
 
-import aiohttp  # ← ADDED: Import aiohttp
+import re
+
+import aiohttp
 import deezer
+from deezer.errors import DataException
 from Cryptodome.Cipher import AES
 
 from ..config import Config
@@ -92,6 +95,25 @@ class DeezerClient(Client):
         else:
             raise Exception(f"Media type {media_type} not available on deezer")
 
+    async def _resolve_redirect(self, media_type: str, item_id: str) -> str | None:
+        """Resuelve redirecciones de Deezer para obtener el ID real del ítem."""
+        url = f"https://www.deezer.com/{media_type}/{item_id}"
+        try:
+            async with self.session.head(url, allow_redirects=True) as response:
+                final_url = str(response.url)
+        except Exception as e:
+            logger.warning(f"Failed to resolve redirect for {item_id}: {e}")
+            return None
+        if final_url == url:
+            return None
+        match = re.search(rf"/{media_type}/(\d+)", final_url)
+        if match:
+            new_id = match.group(1)
+            if new_id != item_id:
+                logger.info(f"Resolved redirect for {media_type} {item_id} -> {new_id}")
+                return new_id
+        return None
+
     async def get_track(self, item_id: str) -> dict:
         try:
             item = await asyncio.to_thread(self.client.api.get_track, item_id)
@@ -115,10 +137,16 @@ class DeezerClient(Client):
         return item
 
     async def get_album(self, item_id: str) -> dict:
-        album_metadata, album_tracks = await asyncio.gather(
-            asyncio.to_thread(self.client.api.get_album, item_id),
-            asyncio.to_thread(self.client.api.get_album_tracks, item_id),
-        )
+        try:
+            album_metadata, album_tracks = await asyncio.gather(
+                asyncio.to_thread(self.client.api.get_album, item_id),
+                asyncio.to_thread(self.client.api.get_album_tracks, item_id),
+            )
+        except DataException:
+            new_id = await self._resolve_redirect("album", item_id)
+            if new_id:
+                return await self.get_album(new_id)
+            raise
         album_metadata["tracks"] = album_tracks["data"]
         album_metadata["track_total"] = len(album_tracks["data"])
         # Prefer physical release date (matches what Deezer's site shows)
@@ -133,10 +161,16 @@ class DeezerClient(Client):
         return album_metadata
 
     async def get_playlist(self, item_id: str) -> dict:
-        pl_metadata, pl_tracks = await asyncio.gather(
-            asyncio.to_thread(self.client.api.get_playlist, item_id),
-            asyncio.to_thread(self.client.api.get_playlist_tracks, item_id),
-        )
+        try:
+            pl_metadata, pl_tracks = await asyncio.gather(
+                asyncio.to_thread(self.client.api.get_playlist, item_id),
+                asyncio.to_thread(self.client.api.get_playlist_tracks, item_id),
+            )
+        except DataException:
+            new_id = await self._resolve_redirect("playlist", item_id)
+            if new_id:
+                return await self.get_playlist(new_id)
+            raise
         tracks = pl_tracks["data"]
 
         # Enrich each track with contributors from the GW API (concurrent).
@@ -169,10 +203,16 @@ class DeezerClient(Client):
         return pl_metadata
 
     async def get_artist(self, item_id: str) -> dict:
-        artist, albums = await asyncio.gather(
-            asyncio.to_thread(self.client.api.get_artist, item_id),
-            asyncio.to_thread(self.client.api.get_artist_albums, item_id),
-        )
+        try:
+            artist, albums = await asyncio.gather(
+                asyncio.to_thread(self.client.api.get_artist, item_id),
+                asyncio.to_thread(self.client.api.get_artist_albums, item_id),
+            )
+        except DataException:
+            new_id = await self._resolve_redirect("artist", item_id)
+            if new_id:
+                return await self.get_artist(new_id)
+            raise
         artist["albums"] = albums["data"]
         return artist
 

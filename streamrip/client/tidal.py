@@ -62,7 +62,7 @@ STREAM_URL_REGEX = re.compile(
 )
 
 QUALITY_MAP = {
-    0: "LOW", 1: "HIGH", 2: "LOSSLESS", 3: "HI_RES",
+    0: "LOW", 1: "HIGH", 2: "LOSSLESS", 3: "HI_RES", 4: "HI_RES_LOSSLESS",
 }
 
 QUALITY_PRIORITY = [3, 2, 1, 0]
