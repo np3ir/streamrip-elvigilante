@@ -24,6 +24,7 @@ from .semaphore import global_download_semaphore
 logger = logging.getLogger("streamrip")
 
 
+
 @dataclass(slots=True)
 class Track(Media):
     meta: TrackMetadata
@@ -41,10 +42,20 @@ class Track(Media):
         await self.preprocess()
         if not self.download_path: self._set_download_path()
 
+        # 1. Exact path match
         if os.path.isfile(self.download_path):
             console.print(f"[yellow]Skipped (Exists)[/]: {self.meta.title}")
             if not self.db.downloaded(self.meta.info.id):
                 self.db.set_downloaded(self.meta.info.id)
+            self.db.set_isrc_downloaded(self.meta.isrc)
+            if self.is_single: remove_title(self.meta.title)
+            return
+
+        # 2. Cross-source ISRC check: skip if this recording was already downloaded
+        #    from a different platform (Deezer vs Tidal vs Qobuz).
+        isrc = self.meta.isrc
+        if isrc and self.db.isrc_downloaded(isrc):
+            console.print(f"[yellow]Skipped (ISRC, other source)[/]: {self.meta.title}")
             if self.is_single: remove_title(self.meta.title)
             return
 
@@ -122,7 +133,14 @@ class Track(Media):
             except OSError as e:
                 logger.warning("Could not save LRC file %s: %s", lrc_path, e)
         self.db.set_downloaded(self.meta.info.id)
-        console.print(f"[green]Downloaded[/]: {os.path.basename(self.download_path)}")
+        self.db.set_isrc_downloaded(self.meta.isrc)
+        basename = os.path.basename(self.download_path)
+        try:
+            console.print(f"[green]Downloaded[/]: {basename}")
+        except Exception:
+            # Fallback for terminals that can't render non-ASCII filenames (e.g. Windows cp1252)
+            safe = basename.encode(errors="replace").decode("ascii", errors="replace")
+            console.print(f"[green]Downloaded[/]: {safe}")
 
     async def _convert(self):
         c = self.config.session.conversion

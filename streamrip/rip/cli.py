@@ -12,7 +12,6 @@ import aiohttp
 import click
 from click_help_colors import HelpColorsGroup  # type: ignore
 from rich.logging import RichHandler
-from rich.markdown import Markdown
 from rich.prompt import Confirm
 from rich.traceback import install
 
@@ -176,32 +175,10 @@ async def url(ctx, urls):
     try:
         with ctx.obj["config"] as cfg:
             cfg: Config
-            updates = cfg.session.misc.check_for_updates
-            if updates:
-                # Run in background
-                version_coro = asyncio.create_task(
-                    latest_streamrip_version(
-                        verify_ssl=cfg.session.downloads.verify_ssl
-                    )
-                )
-            else:
-                version_coro = None
-
             async with Main(cfg) as main:
                 await main.add_all(urls)
                 await main.resolve()
                 await main.rip()
-
-            if version_coro is not None:
-                latest_version, notes = await version_coro
-                if latest_version != __version__:
-                    console.print(
-                        f"\n[green]A new version of streamrip-elvigilante [cyan]v{latest_version}[/cyan]"
-                        " is available! Run [white][bold]pip3 install git+https://github.com/Np3ir/streamrip-elvigilante --upgrade[/bold][/white]"
-                        " to update.[/green]\n"
-                    )
-                    if notes:
-                        console.print(Markdown(notes))
 
     except aiohttp.ClientConnectorCertificateError as e:
         from ..utils.ssl_utils import print_ssl_error_help
@@ -447,39 +424,6 @@ async def id(ctx, source, media_type, id):
             await main.resolve()
             await main.rip()
 
-
-async def latest_streamrip_version(verify_ssl: bool = True) -> tuple[str, str | None]:
-    """Get the latest streamrip-elvigilante version from the fork's GitHub releases.
-
-    Args:
-        verify_ssl: Whether to verify SSL certificates
-
-    Returns:
-        A tuple of (version, release_notes)
-    """
-    connector_kwargs = get_aiohttp_connector_kwargs(verify_ssl=verify_ssl)
-    connector = aiohttp.TCPConnector(**connector_kwargs)
-
-    try:
-        async with aiohttp.ClientSession(connector=connector) as s:
-            async with s.get(
-                "https://api.github.com/repos/Np3ir/streamrip-elvigilante/releases/latest",
-                headers={"Accept": "application/vnd.github+json"},
-            ) as resp:
-                if resp.status != 200:
-                    return __version__, None
-                data = await resp.json()
-
-        # tag_name is typically "v2.2.5" — strip leading "v"
-        tag = data.get("tag_name", "").lstrip("v")
-        if not tag:
-            return __version__, None
-
-        notes = data.get("body") or None
-        return tag, notes
-    except Exception:
-        # Never crash the whole session over an update check
-        return __version__, None
 
 
 if __name__ == "__main__":

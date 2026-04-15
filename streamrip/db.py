@@ -173,6 +173,20 @@ class Downloads(DatabaseBase):
     }
 
 
+class DownloadedISRCs(DatabaseBase):
+    """Cross-source ISRC registry.
+
+    Stores the ISRC of every successfully downloaded track so that the same
+    recording is never downloaded twice, regardless of which platform it came
+    from (Deezer, Tidal, Qobuz …).
+    """
+
+    name = "downloaded_isrcs"
+    structure: Final[dict] = {
+        "isrc": ["text", "unique"],
+    }
+
+
 class Failed(DatabaseBase):
     """A table that stores information about failed downloads."""
 
@@ -188,12 +202,28 @@ class Failed(DatabaseBase):
 class Database:
     downloads: DatabaseInterface
     failed: DatabaseInterface
+    isrcs: DatabaseInterface = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.isrcs is None:
+            self.isrcs = Dummy()
 
     def downloaded(self, item_id: str) -> bool:
         return self.downloads.contains(id=item_id)
 
     def set_downloaded(self, item_id: str):
         self.downloads.add((item_id,))
+
+    def isrc_downloaded(self, isrc: str) -> bool:
+        """Return True if a track with this ISRC was already downloaded."""
+        if not isrc:
+            return False
+        return self.isrcs.contains(isrc=isrc)
+
+    def set_isrc_downloaded(self, isrc: str):
+        """Record an ISRC as downloaded (cross-source deduplication)."""
+        if isrc:
+            self.isrcs.add((isrc,))
 
     def get_failed_downloads(self) -> list[tuple[str, str, str]]:
         return self.failed.all()

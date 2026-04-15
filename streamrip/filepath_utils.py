@@ -142,7 +142,8 @@ def truncate_filepath_to_max(path: str, max_length: int = 240) -> str:
 # partial artist lists, and word-boundary matching.
 # ---------------------------------------------------------------------------
 
-_FEAT_KEYWORDS = (
+# Full set — safe inside brackets because the bracket itself signals a credit block.
+_FEAT_KEYWORDS_BRACKETED = (
     # English / Universal
     r"f(?:ea)?t(?:\.|uring)?|with|w/|starring|"
     # Spanish
@@ -151,15 +152,21 @@ _FEAT_KEYWORDS = (
     r"mit|avec|et"
 )
 
+# Restricted set for the dash form (" - feat. X").
+# Excludes short common words (con, mit, avec, et) that are also ordinary title
+# words in Spanish / German / French, preventing false matches like
+# " - Con Altura (feat. El Guincho)" being swallowed as a feat block.
+_FEAT_KEYWORDS_DASH = r"f(?:ea)?t(?:\.|uring)?|with|w/|starring"
+
 _RE_ANTI_FEAT = re.compile(
     # Option 1: (feat. X) / [with X] / {starring X} — requires closing bracket
     r"(?:\s*(?:[\(\[\{])\s*"
-    r"(?:" + _FEAT_KEYWORDS + r")"
+    r"(?:" + _FEAT_KEYWORDS_BRACKETED + r")"
     r"\s+([^)\}\]]+?)\s*(?:[\)\]\}]))"
     r"|"
-    # Option 2: " - feat. X" or " – with X" — consumes rest of string
+    # Option 2: " - feat. X" or " – feat. X" — unambiguous English keywords only
     r"(?:\s+[-\u2013]\s+"
-    r"(?:" + _FEAT_KEYWORDS + r")"
+    r"(?:" + _FEAT_KEYWORDS_DASH + r")"
     r"\s+(.*))",
     flags=re.IGNORECASE,
 )
@@ -172,8 +179,13 @@ def clean_track_title(track_title: str, artist_name: str) -> str:
     block contains both known and unknown artists only the unknown ones are kept.
     Multilingual keywords: English, Spanish, German, French.
     """
-    # Build a normalised list of artist names to compare against
-    meta_artists = [a.strip().lower() for a in artist_name.split(",") if a.strip()]
+    # Build a normalised list of artist names to compare against.
+    # Split on any common artist separator: comma, slash, ampersand, " & ", " / ".
+    meta_artists = [
+        a.strip().lower()
+        for a in re.split(r"\s*/\s*|,\s*|\s+&\s+", artist_name)
+        if a.strip()
+    ]
 
     def is_known(name: str) -> bool:
         n = name.strip().lower()

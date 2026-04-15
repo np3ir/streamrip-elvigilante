@@ -228,8 +228,9 @@ class AlbumMetadata:
     def from_tidal(cls, resp: dict) -> AlbumMetadata:
         """Parses standard Tidal album response."""
         album = resp.get("title", "Unknown Album")
-        # Date handling (no shifting)
-        raw_date = resp.get("releaseDate") or resp.get("streamStartDate")
+        # Prefer streamStartDate (physical/earliest) over releaseDate (digital).
+        # This matches the date Deezer reports via PHYSICAL_RELEASE_DATE in its GW API.
+        raw_date = resp.get("streamStartDate") or resp.get("releaseDate")
         release_date, year = cls.correct_release_date(raw_date)
 
         tracktotal = resp.get("numberOfTracks", 1)
