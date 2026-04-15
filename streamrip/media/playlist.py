@@ -2,12 +2,10 @@ import asyncio
 import html
 import logging
 import os
-import random
 import re
 import traceback
 from contextlib import ExitStack
 from dataclasses import dataclass
-from pathlib import Path
 
 import aiohttp
 from rich.text import Text
@@ -60,33 +58,14 @@ def _resolve_track_folder(
     return os.path.join(folder_str, safe_album_name)
 
 
-def _get_custom_playlist_folder() -> str | None:
-    possible_paths = [
-        Path(os.environ.get("APPDATA", "")) / "streamrip" / "config.toml",
-        Path.home() / ".config" / "streamrip" / "config.toml",
-        Path("config.toml"),
-    ]
+def _get_playlist_parent_folder(config: "Config") -> str:
+    """Return the parent folder for playlists.
 
-    config_path = None
-    for p in possible_paths:
-        if p.exists() and p.is_file():
-            config_path = p
-            break
-    
-    if not config_path:
-        return None
-
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            for line in f:
-                match = re.search(r'^\s*#?\s*playlist_folder\s*=\s*"(.*)"', line)
-                if match:
-                    path = match.group(1)
-                    return path.replace("\\\\", "\\")
-    except Exception:
-        pass
-    
-    return None
+    Uses ``downloads.playlist_folder`` when set; falls back to the main
+    ``downloads.folder``.
+    """
+    custom = getattr(config.session.downloads, "playlist_folder", "") or ""
+    return custom.strip() or config.session.downloads.folder
 
 
 @dataclass(slots=True)
@@ -275,12 +254,8 @@ class PendingPlaylist(Pending):
             return None
         
         name = meta.name
-        
-        custom_path = _get_custom_playlist_folder()
-        if custom_path:
-            parent = custom_path
-        else:
-            parent = self.config.session.downloads.folder
+
+        parent = _get_playlist_parent_folder(self.config)
         
         restrict_chars = self.config.session.filepaths.restrict_characters
         safe_name = clean_filename(name, restrict=restrict_chars)
@@ -345,11 +320,7 @@ class PendingLastfmPlaylist(Pending):
                 requests.append(self._make_query(f"{title} {artist}", s, callback))
             results = await asyncio.gather(*requests)
 
-        custom_path = _get_custom_playlist_folder()
-        if custom_path:
-            parent = custom_path
-        else:
-            parent = self.config.session.downloads.folder
+        parent = _get_playlist_parent_folder(self.config)
 
         restrict = self.config.session.filepaths.restrict_characters
         safe_title = clean_filename(playlist_title, restrict=restrict)

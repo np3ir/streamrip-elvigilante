@@ -1,6 +1,11 @@
 [downloads]
 # Folder where tracks are downloaded to
 folder = ""
+# Optional: Separate folder for playlists.
+# If set, all playlist downloads go here instead of 'folder'.
+# Example: "Z:/!playlists" or "/mnt/music/Playlists"
+# Leave empty to use the main 'folder' for playlists too.
+playlist_folder = ""
 # Put Qobuz albums in a 'Qobuz' folder, Tidal albums in 'Tidal' etc.
 source_subdirectories = false
 # Put tracks in an album with 2 or more discs into a subfolder named `Disc N` 
