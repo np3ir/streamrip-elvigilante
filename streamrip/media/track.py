@@ -138,9 +138,12 @@ class Track(Media):
         try:
             console.print(f"[green]Downloaded[/]: {basename}")
         except Exception:
-            # Fallback for terminals that can't render non-ASCII filenames (e.g. Windows cp1252)
-            safe = basename.encode(errors="replace").decode("ascii", errors="replace")
-            console.print(f"[green]Downloaded[/]: {safe}")
+            # Fallback for terminals that can't handle non-ASCII (e.g. Windows cp1252)
+            try:
+                safe = basename.encode("ascii", errors="replace").decode("ascii")
+                console.print(f"[green]Downloaded[/]: {safe}")
+            except Exception:
+                pass
 
     async def _convert(self):
         c = self.config.session.conversion
@@ -186,8 +189,11 @@ class PendingTrack(Pending):
         except NonStreamableError: return None
 
         sep = self.config.session.metadata.artist_separator
-        try: meta = TrackMetadata.from_resp(self.album, source, resp, sep)
-        except Exception: return None
+        try:
+            meta = TrackMetadata.from_resp(self.album, source, resp, sep)
+        except Exception as e:
+            logger.error("Error parsing track metadata id=%s source=%s: %s", self.id, source, e)
+            return None
         if meta is None:
             self.db.set_failed(source, "track", self.id)
             return None
@@ -241,7 +247,9 @@ class PendingSingle(Pending):
         try:
             album = AlbumMetadata.from_track_resp(resp, self.client.source, sep)
             meta = TrackMetadata.from_resp(album, self.client.source, resp, sep)
-        except Exception: return None
+        except Exception as e:
+            logger.error("Error parsing single metadata id=%s source=%s: %s", self.id, self.client.source, e)
+            return None
         if album is None or meta is None: return None
 
         config = self.config.session

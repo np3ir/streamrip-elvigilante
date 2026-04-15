@@ -362,8 +362,8 @@ class TrackMetadata:
                     if extra:
                         logger.debug("Playlist track missing contributors — recovered feat artist(s) from title: %s", extra)
                         artist = artist_separator.join([artist] + extra)
-        tracknumber = typed(resp.get("track_position", 1), int)
-        discnumber = typed(resp.get("disk_number", 1), int)
+        tracknumber = int(resp.get("track_position") or 1)
+        discnumber = int(resp.get("disk_number") or 1)
         isrc = typed(resp.get("isrc"), str | None)
         explicit = resp.get("explicit_lyrics", False)
         composers = [
