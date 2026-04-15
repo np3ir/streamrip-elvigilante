@@ -247,10 +247,9 @@ class DeezerClient(Client):
             raise NonStreamableError(
                 "No item id provided. This can happen when searching for fallback songs.",
             )
-        # TODO: optimize such that all of the ids are requested at once
         dl_info: dict = {"quality": quality, "id": item_id}
 
-        track_info = self.client.gw.get_track(item_id)
+        track_info = await asyncio.to_thread(self.client.gw.get_track, item_id)
 
         fallback_id = track_info.get("FALLBACK", {}).get("SNG_ID")
 
@@ -260,16 +259,41 @@ class DeezerClient(Client):
             (1, "FLAC"),  # quality 2
         ]
 
-        _, format_str = quality_map[quality]
-
-        dl_info["quality_to_size"] = [
-            int(track_info.get(f"FILESIZE_{format}", 0)) for _, format in quality_map
+        file_sizes = [
+            int(track_info.get(f"FILESIZE_{fmt}", 0)) for _, fmt in quality_map
         ]
+        dl_info["quality_to_size"] = file_sizes
+
+        # Respect lower_quality_if_not_available flag (self.config is DeezerConfig).
+        allow_fallback = getattr(self.config, "lower_quality_if_not_available", True)
+
+        actual_quality = quality
+        for q in range(quality, -1, -1):
+            if file_sizes[q] > 0:
+                actual_quality = q
+                break
+        else:
+            raise NonStreamableError(
+                f"Track {item_id} has no available quality tier."
+            )
+
+        if actual_quality < quality:
+            if not allow_fallback:
+                raise NonStreamableError(
+                    f"The requested quality {quality} is not available and fallback is disabled."
+                )
+            logger.warning(
+                "Track %s: quality %d unavailable (FILESIZE=0), falling back to quality %d.",
+                item_id, quality, actual_quality,
+            )
+
+        _, format_str = quality_map[actual_quality]
+        dl_info["quality"] = actual_quality
 
         token = track_info["TRACK_TOKEN"]
         try:
-            logger.debug("Fetching deezer url with token %s", token)
-            url = self.client.get_track_url(token, format_str)
+            logger.debug("Fetching deezer url for track %s (quality=%d fmt=%s)", item_id, actual_quality, format_str)
+            url = await asyncio.to_thread(self.client.get_track_url, token, format_str)
         except deezer.WrongLicense:
             raise NonStreamableError(
                 "The requested quality is not available with your subscription. "
@@ -288,13 +312,6 @@ class DeezerClient(Client):
                 logger.warning("URL fetch failed for track %s (%s), trying fallback %s", item_id, e, fallback_id)
                 return await self.get_downloadable(fallback_id, quality, is_retry=True)
             raise NonStreamableError(f"Could not get download URL for track {item_id}: {e}")
-
-        if url is None:
-            url = self._get_encrypted_file_url(
-                item_id,
-                track_info["MD5_ORIGIN"],
-                track_info["MEDIA_VERSION"],
-            )
 
         dl_info["url"] = url
         logger.debug("dz track info: %s", track_info)

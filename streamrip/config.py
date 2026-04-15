@@ -17,7 +17,7 @@ logger = logging.getLogger("streamrip")
 APP_DIR = click.get_app_dir("streamrip")
 os.makedirs(APP_DIR, exist_ok=True)
 DEFAULT_CONFIG_PATH = os.path.join(APP_DIR, "config.toml")
-CURRENT_CONFIG_VERSION = "2.0.6"
+CURRENT_CONFIG_VERSION = "2.2.0"
 
 
 class OutdatedConfigError(Exception):
@@ -52,6 +52,10 @@ class DeezerConfig:
     quality: int
     use_deezloader: bool
     deezloader_warnings: bool
+    # When True (default), fall back to a lower quality if the requested one
+    # is unavailable — the client always does this internally; the flag is
+    # exposed here so tests and future config UI can inspect/override it.
+    lower_quality_if_not_available: bool = True
 
 
 @dataclass(slots=True)

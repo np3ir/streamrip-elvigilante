@@ -38,7 +38,8 @@ METADATA_TYPES = (
 )
 
 FLAC_KEY = {v: v.upper() for v in METADATA_TYPES}
-FLAC_KEY["year"] = None  # DATE (below) carries the year as YYYY — no separate YEAR tag needed
+# FLAC / Vorbis comments: write both YEAR (YYYY) and DATE (full YYYY-MM-DD) so that
+# basic players show just the year while advanced ones get the full release date.
 MP4_KEY = dict(zip(METADATA_TYPES, MP4_KEYS))
 MP3_KEY = dict(zip(METADATA_TYPES, MP3_KEYS))
 
@@ -115,9 +116,8 @@ class Container(Enum):
             if attr == "genre": return meta.album.get_genres()
             elif attr == "copyright": return meta.album.get_copyright()
             elif attr == "date":
-                # Write year (YYYY) to the DATE/©day field so all tag editors
-                # show just the year — full release date is preserved in folder path.
-                val = meta.album.year
+                # Full release date (YYYY-MM-DD) when available; fall back to year.
+                val = meta.album.date or meta.album.release_date or meta.album.year
             else:
                 val = getattr(meta.album, attr)
             if val is None: return None

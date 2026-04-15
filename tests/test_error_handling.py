@@ -97,7 +97,16 @@ class TestErrorHandling:
                 side_effect=Exception("Media download failed")
             )
 
-            main.media = [mock_media_success, mock_media_failure]
+            # Main.rip() processes items via the queue+worker system.
+            # Each queue item must be a "pending" object with a resolve() method
+            # that returns the actual media item (or None to skip).
+            def _make_pending(media_item):
+                pending = MagicMock()
+                pending.resolve = AsyncMock(return_value=media_item)
+                return pending
+
+            await main.queue.put(_make_pending(mock_media_success))
+            await main.queue.put(_make_pending(mock_media_failure))
 
             await main.rip()
 

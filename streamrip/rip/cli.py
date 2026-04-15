@@ -12,6 +12,7 @@ import aiohttp
 import click
 from click_help_colors import HelpColorsGroup  # type: ignore
 from rich.logging import RichHandler
+from rich.markdown import Markdown
 from rich.prompt import Confirm
 from rich.traceback import install
 
@@ -424,6 +425,32 @@ async def id(ctx, source, media_type, id):
             await main.resolve()
             await main.rip()
 
+
+
+async def latest_streamrip_version(verify_ssl: bool = True) -> tuple[str, str | None]:
+    """Get the latest streamrip-elvigilante version from the fork's GitHub releases.
+
+    Returns a tuple of (latest_version_tag, release_notes_or_None).
+    Never raises — returns the current version on any network or parse error.
+    """
+    connector_kwargs = get_aiohttp_connector_kwargs(verify_ssl=verify_ssl)
+    connector = aiohttp.TCPConnector(**connector_kwargs)
+    try:
+        async with aiohttp.ClientSession(connector=connector) as s:
+            async with s.get(
+                "https://api.github.com/repos/Np3ir/streamrip-elvigilante/releases/latest",
+                headers={"Accept": "application/vnd.github+json"},
+            ) as resp:
+                if resp.status != 200:
+                    return __version__, None
+                data = await resp.json()
+        tag = data.get("tag_name", "").lstrip("v")
+        if not tag:
+            return __version__, None
+        notes = data.get("body") or None
+        return tag, notes
+    except Exception:
+        return __version__, None
 
 
 if __name__ == "__main__":

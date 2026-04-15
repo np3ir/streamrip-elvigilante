@@ -15,6 +15,7 @@ from streamrip.config import (
     DownloadsConfig,
     FilepathsConfig,
     LastFmConfig,
+    LyricsConfig,
     MetadataConfig,
     MiscConfig,
     QobuzConfig,
@@ -247,6 +248,7 @@ def test_sample_config_data_fields(sample_config_data):
             lossy_bitrate=320,
         ),
         misc=MiscConfig(version="2.0", check_for_updates=True),
+        lyrics=LyricsConfig(),
         _modified=False,
     )
     assert sample_config_data.downloads == test_config.downloads

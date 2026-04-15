@@ -152,7 +152,7 @@ class TrackMetadata:
         return truncate_filepath_to_max(full_path)
 
     @classmethod
-    def from_qobuz(cls, album: AlbumMetadata, resp: dict, artist_separator: str) -> TrackMetadata | None:
+    def from_qobuz(cls, album: AlbumMetadata, resp: dict, artist_separator: str = DEFAULT_ARTIST_SEPARATOR) -> TrackMetadata | None:
         def split_feat_artists(name: str) -> list[str]:
             separators = [" feat. ", " featuring ", " feat ", " ft. ", " ft "]
             for sep in separators:

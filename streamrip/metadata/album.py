@@ -146,7 +146,7 @@ class AlbumMetadata:
             return raw_date, year
 
     @classmethod
-    def from_qobuz(cls, resp: dict, artist_separator: str) -> AlbumMetadata:
+    def from_qobuz(cls, resp: dict, artist_separator: str = DEFAULT_ARTIST_SEPARATOR) -> AlbumMetadata:
         album = resp.get("title", "Unknown Album")
         tracktotal = resp.get("tracks_count", 1)
         genre = resp.get("genres_list") or resp.get("genre") or []
