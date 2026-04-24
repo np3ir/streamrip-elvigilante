@@ -78,6 +78,7 @@ class DatabaseConfig:
     downloads_path: str
     failed_downloads_enabled: bool
     failed_downloads_path: str
+    isrc_enabled: bool = True
 
 
 @dataclass(slots=True)

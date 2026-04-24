@@ -95,7 +95,7 @@ class Main:
 
         # ISRC cross-source deduplication DB — same folder as downloads DB.
         isrc_db_path = os.path.join(os.path.dirname(db_path), "isrc_downloaded.db")
-        isrc_db = db.DownloadedISRCs(isrc_db_path)
+        isrc_db = db.DownloadedISRCs(isrc_db_path) if c.session.database.isrc_enabled else db.Dummy()
 
         self.database = db.Database(downloads_db, failed_downloads_db, isrc_db)
         # -----------------------------------------------------------
