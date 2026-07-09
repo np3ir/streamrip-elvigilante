@@ -1,5 +1,5 @@
 > [!WARNING]
-> This app is for personal, educational, and archival purposes only. It is not affiliated with Tidal. Users must ensure their use complies with Tidal's terms of service and all applicable local copyright laws. Downloaded content is for personal use and may not be shared or redistributed. The developer assumes no responsibility for misuse of this app.
+> **This app is for personal, educational, and archival purposes only.** It is not affiliated with Qobuz, Tidal, Deezer, or SoundCloud. Users must ensure their use complies with each platform's terms of service and all applicable local copyright laws. Downloaded content is for personal use and may not be shared or redistributed. The developer assumes no responsibility for misuse of this app.
 
 # Streamrip — ElVigilante Edition
 
