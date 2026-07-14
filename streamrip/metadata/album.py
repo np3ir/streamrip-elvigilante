@@ -55,6 +55,14 @@ class AlbumMetadata:
     release_date: str = "Unknown"
     release_type: str = "ALBUM"
 
+    def __post_init__(self):
+        # tiddl parity: strip a trailing "(Explicit)"/"(E)" from the album title
+        # so it never appears in the folder name or the ALBUM tag.
+        if self.album:
+            self.album = re.sub(
+                r"\s*\(\s*(?:Explicit|E)\s*\)", "", self.album, flags=re.IGNORECASE
+            ).strip() or self.album
+
     def get_genres(self) -> str:
         return ", ".join(self.genre)
 
