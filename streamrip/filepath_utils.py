@@ -4,6 +4,15 @@ import unicodedata
 
 from pathvalidate import sanitize_filename, sanitize_filepath
 
+# Unicode dash/hyphen lookalikes -> ASCII hyphen. Services sometimes use these
+# instead of "-"; normalizing keeps filenames identical across sources (Tidal,
+# Qobuz, Deezer) and matches tiddl. Covers hyphen, non-breaking hyphen,
+# figure/en/em dash, horizontal bar and minus sign.
+_DASH_TO_HYPHEN = str.maketrans({
+    "‐": "-", "‑": "-", "‒": "-", "–": "-",
+    "—": "-", "―": "-", "−": "-",
+})
+
 
 def truncate_str(text: str) -> str:
     """
@@ -67,6 +76,7 @@ def clean_filename(fn: str, restrict: bool = False) -> str:
     """
     fn = remove_zalgo(fn)
     fn = unicodedata.normalize("NFC", fn)
+    fn = fn.translate(_DASH_TO_HYPHEN)
 
     replacements = {
         ":": "：", "/": "／", "\\": "＼", "<": "＜", ">": "＞",
@@ -89,6 +99,7 @@ def clean_filepath(fn: str, restrict: bool = False) -> str:
     """
     fn = remove_zalgo(fn)
     fn = unicodedata.normalize("NFC", fn)
+    fn = fn.translate(_DASH_TO_HYPHEN)
 
     replacements = {
         ":": "：", "<": "＜", ">": "＞", '"': "＂",
