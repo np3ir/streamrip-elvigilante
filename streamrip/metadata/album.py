@@ -143,21 +143,18 @@ class AlbumMetadata:
         raw_date = resp.get("release_date_original") or resp.get("release_date")
         release_date, year = cls.correct_release_date(raw_date)
         _copyright = resp.get("copyright", "")
-        raw_artists = resp.get("artists")
-        if isinstance(raw_artists, list) and raw_artists:
-            names = []
-            for a in raw_artists:
-                if not isinstance(a, dict):
-                    logger.warning("AlbumMetadata.from_qobuz: unexpected artist entry type %s, skipping", type(a))
-                    continue
-                name = a.get("name")
-                if name and isinstance(name, str):
-                    names.append(name)
-                else:
-                    logger.warning("AlbumMetadata.from_qobuz: artist entry missing/invalid 'name': %r, skipping", a)
-            albumartist = artist_separator.join(sorted(names)) if names else typed(safe_get(resp, "artist", "name"), str)
-        else:
-            albumartist = typed(safe_get(resp, "artist", "name"), str)
+        # Album artist = the album's single primary artist, matching tiddl's
+        # {album.artist}. Fall back to the first of the artists[] list only when
+        # the primary artist field is absent (never the full joined list, or a
+        # collaboration album would land in a multi-name folder).
+        albumartist = typed(safe_get(resp, "artist", "name"), str)
+        if not albumartist:
+            raw_artists = resp.get("artists")
+            if isinstance(raw_artists, list):
+                for a in raw_artists:
+                    if isinstance(a, dict) and isinstance(a.get("name"), str) and a["name"]:
+                        albumartist = a["name"]
+                        break
         albumcomposer = typed(safe_get(resp, "composer", "name", default=""), str)
         _label = resp.get("label")
         if isinstance(_label, dict):
@@ -401,10 +398,13 @@ class AlbumMetadata:
         release_date, year = cls.correct_release_date(raw_date)
         copyright = resp.get("copyright", "")
         artists = resp.get("artists", [])
-        albumartist = (
-            artist_separator.join(sorted(a["name"] for a in artists))
-            or album_resp.get("artist", {}).get("name", "Unknown Artist")
-        )
+        # Album artist = the album's primary (single) artist, matching tiddl's
+        # {album.artist}. Never the full joined list, or a collaboration single
+        # would land in a multi-name folder instead of the primary artist's.
+        albumartist = (album_resp.get("artist") or {}).get("name")
+        if not albumartist:
+            mains = [a["name"] for a in artists if a.get("type") == "MAIN" or not a.get("type")]
+            albumartist = mains[0] if mains else (artists[0]["name"] if artists else "Unknown Artist")
         disctotal = resp.get("volumeNumber", 1)
         explicit = resp.get("explicit", False)
         tidal_quality = resp.get("audioQuality", "LOW")
