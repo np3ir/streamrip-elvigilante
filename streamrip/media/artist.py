@@ -1,5 +1,5 @@
-import inspect
 import asyncio
+import inspect
 import logging
 import re
 from dataclasses import dataclass

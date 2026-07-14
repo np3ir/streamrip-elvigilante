@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import logging
 import re
-import os
 from dataclasses import dataclass
-from typing import Optional
 from datetime import datetime
+from typing import Optional
 
 from ..filepath_utils import clean_filename, clean_filepath, get_alpha_bucket
 from .covers import Covers
@@ -286,17 +285,8 @@ class AlbumMetadata:
         tracktotal = resp.get("nb_tracks", 1)
         disctotal = 1
         explicit = resp.get("explicit_lyrics", False)
-        # Use contributors to build a multi-artist albumartist when available.
-        # Deezer sometimes returns contributors as {"data": [...]} and sometimes
-        # as a flat list — handle both.
-        contributors_raw = resp.get("contributors", {})
-        if isinstance(contributors_raw, list):
-            contributors = contributors_raw
-        elif isinstance(contributors_raw, dict):
-            contributors = contributors_raw.get("data", [])
-        else:
-            contributors = []
-        # Folder uses only the primary artist (artist.name field from Deezer API).
+        # Folder/albumartist use only the primary artist (artist.name), matching
+        # tiddl's {album.artist}.
         artist_obj = resp.get("artist", {})
         albumartist = artist_obj.get("name", "Unknown Artist") if isinstance(artist_obj, dict) else "Unknown Artist"
         genres_data = resp.get("genres", {}).get("data", [])

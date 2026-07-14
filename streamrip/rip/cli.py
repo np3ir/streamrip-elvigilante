@@ -12,7 +12,6 @@ import aiohttp
 import click
 from click_help_colors import HelpColorsGroup  # type: ignore
 from rich.logging import RichHandler
-from rich.markdown import Markdown
 from rich.prompt import Confirm
 from rich.traceback import install
 

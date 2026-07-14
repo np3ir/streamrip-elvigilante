@@ -10,9 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from streamrip.media.track import Track
 from streamrip.config import DownloadsConfig
-
+from streamrip.media.track import Track
 
 # ---------------------------------------------------------------------------
 # Helpers

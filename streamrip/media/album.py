@@ -1,12 +1,15 @@
 import asyncio
-import sys 
 import logging
 import os
+import sys
 from dataclasses import dataclass
 
 from .. import progress
 from ..client import Client
 from ..config import Config
+
+# --- CORRECCIÓN: Importación que faltaba ---
+from ..console import console
 from ..db import Database
 from ..exceptions import NonStreamableError
 from ..filepath_utils import clean_filepath
@@ -15,9 +18,6 @@ from ..metadata.util import DEFAULT_ARTIST_SEPARATOR, get_album_track_ids
 from .artwork import download_artwork
 from .media import Media, Pending
 from .track import PendingTrack
-
-# --- CORRECCIÓN: Importación que faltaba ---
-from ..console import console
 
 logger = logging.getLogger("streamrip")
 

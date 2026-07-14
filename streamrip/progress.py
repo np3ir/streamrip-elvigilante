@@ -6,18 +6,16 @@ from typing import Callable, Dict, Optional, Tuple
 
 from rich.console import Group
 from rich.live import Live
+from rich.logging import RichHandler
 from rich.progress import (
     BarColumn,
     Progress,
     SpinnerColumn,
-    TaskProgressColumn,
     TextColumn,
-    TimeRemainingColumn,
     TransferSpeedColumn,
 )
 from rich.rule import Rule
 from rich.text import Text
-from rich.logging import RichHandler
 
 from .console import console
 

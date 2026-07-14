@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import re
 from dataclasses import dataclass
 
 import aiohttp
@@ -9,13 +8,14 @@ import aiohttp
 from .. import converter
 from ..client import Client, Downloadable
 from ..config import Config
+from ..console import console
 from ..db import Database
 from ..exceptions import NonStreamableError
+
 # --- IMPORTAMOS LA NUEVA FUNCIÓN ---
-from ..filepath_utils import clean_filename, truncate_filepath_to_max, clean_track_title
+from ..filepath_utils import clean_filename, clean_track_title, truncate_filepath_to_max
 from ..metadata import AlbumMetadata, Covers, TrackMetadata, tag_file
 from ..progress import add_title, get_progress_callback, remove_title
-from ..console import console
 from .artwork import download_artwork
 from .lyrics import fetch_lrc
 from .media import Media, Pending

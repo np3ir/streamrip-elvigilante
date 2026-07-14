@@ -1,6 +1,5 @@
 """Tests for retry configuration fields in DownloadsConfig."""
 
-import pytest
 
 from streamrip.config import ConfigData, DownloadsConfig
 

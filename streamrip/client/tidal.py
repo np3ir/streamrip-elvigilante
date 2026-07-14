@@ -2,17 +2,14 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import random
 import re
 import time
-from datetime import datetime
-from json import JSONDecodeError
-
-import os
 
 import aiohttp
 import click
-from aiohttp import TCPConnector, CookieJar, ClientSession, ClientTimeout
+from aiohttp import ClientSession, ClientTimeout, CookieJar, TCPConnector
 
 from ..config import Config
 from ..exceptions import NonStreamableError
@@ -286,7 +283,7 @@ class TidalClient(Client):
         except:
             if 'includeContributors' in params:
                 del params['includeContributors']
-                if 'includeContributors' in base_params: del base_params['includeContributors']
+                base_params.pop('includeContributors', None)
                 resp = await self._api_request(endpoint, params=params, base=API_BASE)
             else:
                 return []

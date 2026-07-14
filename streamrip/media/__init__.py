@@ -11,27 +11,27 @@ from .playlist import (
 )
 from .track import PendingSingle, PendingTrack, Track
 from .user import PendingUser, User
-from .video import Video, PendingVideo
+from .video import PendingVideo, Video
 
 __all__ = [
+    "Album",
+    "Artist",
+    "Label",
     "Media",
     "Pending",
-    "Album",
     "PendingAlbum",
-    "Artist",
     "PendingArtist",
-    "Label",
     "PendingLabel",
-    "Playlist",
-    "PendingPlaylist",
     "PendingLastfmPlaylist",
-    "Track",
-    "PendingTrack",
+    "PendingPlaylist",
     "PendingPlaylistTrack",
     "PendingSingle",
-    "remove_artwork_tempdirs",
+    "PendingTrack",
     "PendingUser",
+    "PendingVideo",
+    "Playlist",
+    "Track",
     "User",
     "Video",
-    "PendingVideo",
+    "remove_artwork_tempdirs",
 ]

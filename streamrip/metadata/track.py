@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import logging
-import re
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional
 
+from ..filepath_utils import clean_filename, clean_track_title, truncate_filepath_to_max
 from .album import AlbumMetadata
-from .util import DEFAULT_ARTIST_SEPARATOR, safe_get, typed
-from ..filepath_utils import truncate_filepath_to_max, clean_filename, clean_track_title
+from .util import DEFAULT_ARTIST_SEPARATOR, typed
 
 logger = logging.getLogger("streamrip")
 
@@ -55,10 +55,25 @@ def _cap_artists(joined: str, separator: str) -> str:
 class _ItemProxy:
     """Proxy so tidmon-style {item.field} templates work inside streamrip."""
     __slots__ = (
-        "id", "number", "volume", "title", "safe_title", "title_version",
-        "artist", "safe_artist", "artists", "safe_artists", "features",
-        "artists_with_features", "isrc", "version", "copyright", "bpm",
-        "quality", "explicit", "genre",
+        "artist",
+        "artists",
+        "artists_with_features",
+        "bpm",
+        "copyright",
+        "explicit",
+        "features",
+        "genre",
+        "id",
+        "isrc",
+        "number",
+        "quality",
+        "safe_artist",
+        "safe_artists",
+        "safe_title",
+        "title",
+        "title_version",
+        "version",
+        "volume",
     )
 
     def __init__(self, meta: "TrackMetadata") -> None:
@@ -383,7 +398,7 @@ class TrackMetadata:
                     extra = [p for p in feat_parts if p.lower() != artist.lower()]
                     if extra:
                         logger.debug("Playlist track missing contributors — recovered feat artist(s) from title: %s", extra)
-                        artist = artist_separator.join([artist] + extra)
+                        artist = artist_separator.join([artist, *extra])
         tracknumber = int(resp.get("track_position") or 1)
         discnumber = int(resp.get("disk_number") or 1)
         isrc = typed(resp.get("isrc"), str | None)

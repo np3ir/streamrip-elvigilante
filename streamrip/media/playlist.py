@@ -16,8 +16,9 @@ from ..config import Config
 from ..console import console
 from ..db import Database
 from ..exceptions import NonStreamableError
+
 # --- IMPORTAMOS LA NUEVA FUNCIÓN ---
-from ..filepath_utils import clean_filepath, clean_filename, clean_track_title
+from ..filepath_utils import clean_filename, clean_track_title
 from ..metadata import (
     AlbumMetadata,
     Covers,
@@ -27,8 +28,8 @@ from ..metadata import (
 )
 from ..utils.ssl_utils import get_aiohttp_connector_kwargs
 from .artwork import download_artwork
-from .media import Media, Pending
 from .lyrics import fetch_lrc
+from .media import Media, Pending
 from .track import Track
 
 logger = logging.getLogger("streamrip")

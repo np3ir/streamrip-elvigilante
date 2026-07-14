@@ -3,21 +3,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 from mutagen.easymp4 import EasyMP4
 
-from ..client import Downloadable
+from ..client import Client, Downloadable
 from ..config import Config
+from ..console import console
 from ..db import Database
 from ..filepath_utils import clean_filename
 from ..progress import add_title, get_progress_callback, remove_title
-from ..console import console
 from .media import Media, Pending
 from .semaphore import global_download_semaphore
-from ..client import Client
 
 logger = logging.getLogger("streamrip")
 
@@ -115,8 +113,7 @@ class Video(Media):
 
     async def postprocess(self):
         remove_title(self.meta.title)
-        
-        target_path = self.download_path
+
         if hasattr(self, "_ts_path") and os.path.exists(self._ts_path):
             # Convert TS to MP4
             await self._convert_ts_to_mp4(self._ts_path, self.download_path)

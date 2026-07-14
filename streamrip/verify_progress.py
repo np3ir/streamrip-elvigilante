@@ -1,8 +1,9 @@
-import time
-import sys
 import random
+import sys
 import threading
+import time
 from pathlib import Path
+
 
 # --- Try to add the current Python's site-packages automatically (no hardcode) ---
 def _add_site_packages() -> None:
@@ -15,8 +16,8 @@ def _add_site_packages() -> None:
 
 _add_site_packages()
 
-from progress import get_progress_callback, clear_progress, add_title, remove_title
 from console import console  # same Rich console used by streamrip
+from progress import add_title, clear_progress, get_progress_callback, remove_title
 
 
 def simulate_download(filename: str, size: int, base_delay: float, jitter: float = 0.02) -> None:

@@ -3,13 +3,12 @@ import binascii
 import hashlib
 import json
 import logging
-
 import re
 
 import aiohttp
 import deezer
-from deezer.errors import DataException
 from Cryptodome.Cipher import AES
+from deezer.errors import DataException
 
 from ..config import Config
 from ..exceptions import (
@@ -17,8 +16,8 @@ from ..exceptions import (
     MissingCredentialsError,
     NonStreamableError,
 )
-from .client import Client
 from ..utils.ssl_utils import get_aiohttp_connector_kwargs  # ← ADDED
+from .client import Client
 from .downloadable import DeezerDownloadable
 
 logger = logging.getLogger("streamrip")

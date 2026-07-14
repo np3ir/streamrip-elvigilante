@@ -6,7 +6,7 @@ from ..config import Config
 from ..db import Database
 from ..exceptions import NonStreamableError
 from .media import Media, Pending
-from .playlist import PendingPlaylist, Playlist
+from .playlist import PendingPlaylist
 
 logger = logging.getLogger("streamrip")
 

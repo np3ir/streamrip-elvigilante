@@ -1,11 +1,10 @@
 import asyncio
-import json
 import logging
-import platform
-import sys
-import re
 import os
-import aiofiles
+import platform
+import re
+import sys
+
 import tomllib  # Native in Python 3.11+
 
 from .. import db
@@ -13,17 +12,13 @@ from ..client import Client, DeezerClient, QobuzClient, SoundcloudClient, TidalC
 from ..config import Config
 from ..console import console
 from ..media import (
-    Media,
-    Pending,
     PendingAlbum,
     PendingArtist,
     PendingLabel,
-    PendingLastfmPlaylist,
     PendingPlaylist,
     PendingSingle,
     remove_artwork_tempdirs,
 )
-from ..metadata import SearchResults
 from ..progress import clear_progress
 from .parse_url import parse_url
 from .prompter import get_prompter

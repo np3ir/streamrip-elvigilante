@@ -69,7 +69,18 @@ build-backend = "poetry.core.masonry.api"
 [tool.ruff.lint]
 # Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
 select = ["E4", "E7", "E9", "F", "I", "ASYNC", "N", "RUF", "ERA001"]
-ignore = []
+# This fork intentionally uses: compact one-liners (if x: return y),
+# bare excepts for best-effort cleanup, post-import module code, fullwidth
+# lookalike characters for filename sanitization, and blocking os/open
+# calls inside async paths. The matching style checks are disabled; real
+# issues (F, E9) stay on.
+ignore = [
+    "E701", "E702", "E722", "E402",
+    "RUF001", "RUF002", "RUF003",
+    "ASYNC230", "ASYNC240",
+    "RUF006",
+    "ERA001",  # false positives on explanatory comments (e.g. "artist.name field")
+]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]

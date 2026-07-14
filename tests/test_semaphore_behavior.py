@@ -1,18 +1,16 @@
 """Tests for global_download_semaphore warning behavior."""
 
 import asyncio
+
+# Import the module directly to reset the global state between tests
 import logging
 from contextlib import nullcontext
 from unittest.mock import MagicMock
 
 import pytest
 
-from streamrip.media.semaphore import global_download_semaphore
-from streamrip import media as _media_pkg
-
-# Import the module directly to reset the global state between tests
-import importlib
 import streamrip.media.semaphore as _sem_module
+from streamrip.media.semaphore import global_download_semaphore
 
 
 def _make_config(concurrency=True, max_connections=4):

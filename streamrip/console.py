@@ -1,9 +1,7 @@
 import sys
 
 from rich.console import Console
-from rich.panel import Panel
 from rich.text import Text
-from rich.style import Style
 
 # On Windows the default console encoding is cp1252, which can't represent
 # many Unicode characters (e.g. fullwidth glyphs in Tidal/Deezer metadata).
