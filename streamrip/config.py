@@ -122,6 +122,14 @@ class LyricsConfig:
     save_lrc: bool = False
 
 
+# Default filename format for tracks saved inside a playlist folder. Unlike
+# track_format it has no track-number prefix, matching tiddl's playlist
+# template ("!playlists/{title}/{artists} - {title}").
+DEFAULT_PLAYLIST_TRACK_FORMAT = (
+    "{item.artists_with_features} - {item.title_version} {item.explicit:shortparens}"
+)
+
+
 @dataclass(slots=True)
 class FilepathsConfig:
     add_singles_to_folder: bool
@@ -129,6 +137,7 @@ class FilepathsConfig:
     track_format: str
     restrict_characters: bool
     truncate_to: int
+    playlist_track_format: str = DEFAULT_PLAYLIST_TRACK_FORMAT
 
 
 @dataclass(slots=True)
@@ -242,6 +251,11 @@ class ConfigData:
             )
             dl_data["max_retries"] = 0
         downloads = DownloadsConfig(**dl_data)  # type: ignore
+
+        # Back-fill playlist_track_format for configs written before it existed.
+        fp_data = toml["filepaths"]
+        if "playlist_track_format" not in fp_data:
+            fp_data["playlist_track_format"] = DEFAULT_PLAYLIST_TRACK_FORMAT
 
         qobuz = QobuzConfig(**toml["qobuz"])  # type: ignore
         tidal = TidalConfig(**toml["tidal"])  # type: ignore

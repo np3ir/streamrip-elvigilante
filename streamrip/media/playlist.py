@@ -108,25 +108,22 @@ class PendingPlaylistTrack(Pending):
         if c.set_playlist_to_album:
             album.album = self.playlist_name
 
-        # --- CARPETA POR ÁLBUM ---
+        # --- CARPETA PLANA (paridad tiddl: !playlists/{title}/<archivo>) ---
+        # tiddl no crea subcarpeta de álbum dentro de la playlist: todos los
+        # tracks van directo en la carpeta de la playlist.
         restrict_chars = self.config.session.filepaths.restrict_characters
-        track_folder = _resolve_track_folder(
-            self.folder,
-            meta.album.album,
-            c.set_playlist_to_album,
-            restrict_chars,
-        )
+        track_folder = os.fspath(self.folder)
         os.makedirs(track_folder, exist_ok=True)
 
-        # --- LIMPIEZA DE NOMBRES UNIFICADA ---
-        formatter = self.config.session.filepaths.track_format
+        # --- NOMBRE SIN NÚMERO DE TRACK (paridad tiddl) ---
+        formatter = self.config.session.filepaths.playlist_track_format
         track_path = meta.format_track_path(formatter)
         
         # USAMOS LA FUNCIÓN CENTRALIZADA
         track_path = clean_track_title(track_path, meta.artist)
         
         if meta.info.explicit and "explicit" not in track_path.lower():
-            track_path += " [explicit]"
+            track_path += " (explicit)"
         
         track_path = clean_filename(track_path, restrict=restrict_chars)
         if self.config.session.filepaths.truncate_to > 0:

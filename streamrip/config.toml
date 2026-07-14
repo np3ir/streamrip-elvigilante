@@ -181,6 +181,9 @@ folder_format = "{artist_initials}/{albumartist}/({release_date}) {title} ({rele
 # "albumcomposer", "explicit"
 # Note: {explicit} expands to " (explicit)" (with leading space) or empty string
 track_format = "{tracknumber:02}. {artist} - {title}{explicit}"
+# Filename format for tracks inside a playlist folder. Has no track-number
+# prefix, matching tiddl's playlist layout ("!playlists/{title}/{artists} - {title}").
+playlist_track_format = "{item.artists_with_features} - {item.title_version} {item.explicit:shortparens}"
 # Only allow printable ASCII characters in filenames.
 restrict_characters = false
 # Truncate the filename if it is greater than this number of characters
