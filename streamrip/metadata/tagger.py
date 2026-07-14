@@ -38,8 +38,9 @@ METADATA_TYPES = (
 )
 
 FLAC_KEY = {v: v.upper() for v in METADATA_TYPES}
-# FLAC / Vorbis comments: write both YEAR (YYYY) and DATE (full YYYY-MM-DD) so that
-# basic players show just the year while advanced ones get the full release date.
+# tiddl parity: DATE carries the year alone (no separate YEAR tag), and the
+# tags tiddl never writes (totals, UPC) are excluded from FLAC output.
+FLAC_SKIP = {"year", "tracktotal", "disctotal", "upc"}
 MP4_KEY = dict(zip(METADATA_TYPES, MP4_KEYS))
 MP3_KEY = dict(zip(METADATA_TYPES, MP3_KEYS))
 
@@ -66,12 +67,17 @@ class Container(Enum):
     def _tag_flac(self, meta: TrackMetadata) -> list[tuple]:
         out = []
         for k, v in FLAC_KEY.items():
-            if v is None:
+            if v is None or k in FLAC_SKIP:
                 continue
             tag = self._attr_from_meta(meta, k)
             if tag:
-                if k in {"tracknumber", "discnumber", "tracktotal", "disctotal"}:
-                    tag = f"{int(tag):02}"
+                if k in {"tracknumber", "discnumber"}:
+                    tag = str(int(tag))  # unpadded, like tiddl
+                if k == "artist":
+                    # Multi-value ARTIST (one entry per artist), like tiddl
+                    sep = getattr(meta, "artist_separator", None) or " / "
+                    out.append((v, [a.strip() for a in str(tag).split(sep) if a.strip()]))
+                    continue
                 out.append((v, str(tag)))
         return out
 
@@ -88,9 +94,13 @@ class Container(Enum):
     def _tag_mp4(self, meta: TrackMetadata):
         out = []
         for k, v in MP4_KEY.items():
-            if k == "tracknumber": text = [(meta.tracknumber, meta.album.tracktotal)]
-            elif k == "discnumber": text = [(meta.discnumber, meta.album.disctotal)]
+            if k == "tracknumber": text = [(meta.tracknumber, 0)]  # no totals, like tiddl
+            elif k == "discnumber": text = [(meta.discnumber, 0)]
             elif k == "isrc" and meta.isrc is not None: text = meta.isrc.encode("utf-8")
+            elif k == "artist":
+                sep = getattr(meta, "artist_separator", None) or " / "
+                names = [a.strip() for a in (self._attr_from_meta(meta, k) or "").split(sep) if a.strip()]
+                text = names or None
             else: text = self._attr_from_meta(meta, k)
             if v is not None and text is not None:
                 out.append((v, text))
@@ -116,8 +126,8 @@ class Container(Enum):
             if attr == "genre": return meta.album.get_genres()
             elif attr == "copyright": return meta.album.get_copyright()
             elif attr == "date":
-                # Full release date (YYYY-MM-DD) when available; fall back to year.
-                val = meta.album.date or meta.album.release_date or meta.album.year
+                # tiddl parity: DATE = year only
+                val = meta.album.year or str(meta.album.date or meta.album.release_date or "")[:4]
             else:
                 val = getattr(meta.album, attr)
             if val is None: return None

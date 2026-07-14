@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Optional
 from datetime import datetime
 
-from ..filepath_utils import clean_filename, clean_filepath
+from ..filepath_utils import clean_filename, clean_filepath, get_alpha_bucket
 from .covers import Covers
 from .util import DEFAULT_ARTIST_SEPARATOR, get_quality_id, safe_get, typed
 
@@ -70,29 +70,10 @@ class AlbumMetadata:
         # Date cleanup for folders (no shifting)
         release_date_clean = (self.release_date or "").replace(":", "-").replace("/", "-")
 
-        # --- INITIALS LOGIC (A-Z vs #) ---
-        raw_artist = self.albumartist.strip()
-        # Ignore "The " at the start
-        if raw_artist.lower().startswith("the "):
-            sort_name = raw_artist[4:].strip()
-        else:
-            sort_name = raw_artist
-
-        # Calculate initial
-        if sort_name:
-            initial = sort_name[0].upper()
-
-            # --- EL VIGILANTE CORRECTION ---
-            # Treat Æ, Œ, Ð, Þ, Ø and other ligatures as SYMBOLS (#), not letters.
-            if initial in ["Æ", "Œ", "Ð", "Þ", "Ø"]:
-                initial = "#"
-            # If NOT a Latin letter (A-Z or Standard Accents), goes to "#" folder
-            elif not re.match(r"^[A-Z\u00C0-\u00FF]$", initial):
-                initial = "#"
-        else:
-            initial = "Unknown"
-
-        initials_clean = clean_filename(initial)
+        # --- INITIALS LOGIC (A-Z vs #) — same bucket rules as tiddl ---
+        # get_alpha_bucket decomposes accents (A-acute to A), sends ligatures
+        # and symbols to "#", and does NOT skip a leading "The ".
+        initials_clean = clean_filename(get_alpha_bucket(self.albumartist))
         # --------------------------------------
 
         # Prepare clean variables

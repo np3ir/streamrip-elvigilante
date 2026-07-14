@@ -76,13 +76,15 @@ def test_tag_flac_no_cover(sample_metadata):
     assert file["comment"][0] == "testcomment"
     assert file["artist"][0] == "testartist"
     assert file["albumartist"][0] == "testalbumartist"
-    assert file["year"][0] == "1999"
+    # tiddl parity: DATE carries the year alone, no YEAR/TRACKTOTAL tags,
+    # unpadded track/disc numbers
+    assert "year" not in file, file["year"]
     assert file["genre"][0] == "rock, pop"
-    assert file["tracknumber"][0] == "03"
-    assert file["discnumber"][0] == "01"
+    assert file["tracknumber"][0] == "3"
+    assert file["discnumber"][0] == "1"
     assert file["copyright"][0] == "© stuff ℗ other stuff"
-    assert file["tracktotal"][0] == "14"
-    assert file["date"][0] == "1998-02-13"
+    assert "tracktotal" not in file, file["tracktotal"]
+    assert file["date"][0] == "1999"
     assert "purchase_date" not in file, file["purchase_date"]
     os.remove(TEST_FLAC_COPY)
 
@@ -98,13 +100,15 @@ def test_tag_flac_cover(sample_metadata):
     assert file["comment"][0] == "testcomment"
     assert file["artist"][0] == "testartist"
     assert file["albumartist"][0] == "testalbumartist"
-    assert file["year"][0] == "1999"
+    # tiddl parity: DATE carries the year alone, no YEAR/TRACKTOTAL tags,
+    # unpadded track/disc numbers
+    assert "year" not in file, file["year"]
     assert file["genre"][0] == "rock, pop"
-    assert file["tracknumber"][0] == "03"
-    assert file["discnumber"][0] == "01"
+    assert file["tracknumber"][0] == "3"
+    assert file["discnumber"][0] == "1"
     assert file["copyright"][0] == "© stuff ℗ other stuff"
-    assert file["tracktotal"][0] == "14"
-    assert file["date"][0] == "1998-02-13"
+    assert "tracktotal" not in file, file["tracktotal"]
+    assert file["date"][0] == "1999"
     with open(test_cover, "rb") as img:
         assert file.pictures[0].data == img.read()
     assert "purchase_date" not in file, file["purchase_date"]

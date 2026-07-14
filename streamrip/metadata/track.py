@@ -36,6 +36,22 @@ class _Explicit:
         return self.val
 
 
+# Cap the number of artists in FILENAMES (audio tags keep the full list) —
+# matching tiddl's MAX_ARTISTS_IN_NAME: first 3 artists + " & others" when
+# there are more, so compilation tracks never blow past Windows MAX_PATH.
+MAX_ARTISTS_IN_NAME = 3
+OTHERS_SUFFIX = " & others"
+
+
+def _cap_artists(joined: str, separator: str) -> str:
+    if not joined:
+        return joined
+    parts = joined.split(separator)
+    if len(parts) <= MAX_ARTISTS_IN_NAME:
+        return joined
+    return separator.join(parts[:MAX_ARTISTS_IN_NAME]) + OTHERS_SUFFIX
+
+
 class _ItemProxy:
     """Proxy so tidmon-style {item.field} templates work inside streamrip."""
     __slots__ = (
@@ -60,8 +76,10 @@ class _ItemProxy:
         # in the artist string — matching tiddl's clean_track_title behaviour.
         clean_title = clean_track_title(clean_title, meta.artist or "")
 
-        all_artists   = meta.artist or ""
-        main_only     = meta.main_artists or all_artists
+        sep = meta.artist_separator or DEFAULT_ARTIST_SEPARATOR
+        # Name-side fields are capped (tags keep every artist via meta.artist)
+        all_artists   = _cap_artists(meta.artist or "", sep)
+        main_only     = _cap_artists(meta.main_artists or meta.artist or "", sep)
         featured_only = meta.featured_artists or ""
 
         self.id          = meta.info.id
@@ -118,6 +136,8 @@ class TrackMetadata:
     # Tidal MAIN-only and FEATURED-only artist strings for {item.artists}/{item.features}
     main_artists: str | None = None
     featured_artists: str | None = None
+    # Separator used to join the artist strings above (needed to split them back)
+    artist_separator: str = DEFAULT_ARTIST_SEPARATOR
 
     def format_track_path(self, formatter: str) -> str:
         none_str = "Unknown"
@@ -258,6 +278,7 @@ class TrackMetadata:
             isrc=isrc,
             main_artists=artist_separator.join(main_artists) or None,
             featured_artists=artist_separator.join(featured_artists) or None,
+            artist_separator=artist_separator,
         )
 
     @classmethod
@@ -322,6 +343,7 @@ class TrackMetadata:
             version=version,
             main_artists=artist_separator.join(main_artists) or None,
             featured_artists=artist_separator.join(featured_artists) or None,
+            artist_separator=artist_separator,
         )
 
     @classmethod
@@ -397,6 +419,7 @@ class TrackMetadata:
             version=version,
             main_artists=artist_separator.join(dz_main) or None,
             featured_artists=artist_separator.join(dz_feat) or None,
+            artist_separator=artist_separator,
         )
 
     @classmethod
