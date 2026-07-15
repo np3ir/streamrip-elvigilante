@@ -1,10 +1,36 @@
 import functools
-from typing import Optional, Type, TypeVar
+import unicodedata
+from typing import Iterable, Optional, Type, TypeVar
 
 # Default separator used to join multiple artists when no config is available.
 # All public dispatchers (from_resp, from_track_resp, from_album_resp) use this
 # as their default so there is a single source of truth.
 DEFAULT_ARTIST_SEPARATOR: str = ", "
+
+
+def normalize_artist_name(name: str) -> str:
+    """Comparison key for artist names: accent-insensitive, case-insensitive,
+    whitespace-collapsed — so "Rosalia" and "ROSALÍA" count as the same artist.
+    Sources often credit the same artist with different normalization (e.g.
+    Qobuz album credits vs its performers string)."""
+    decomposed = unicodedata.normalize("NFKD", name)
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return " ".join(stripped.casefold().split())
+
+
+def dedup_artists(names: Iterable[str], exclude: Iterable[str] = ()) -> list[str]:
+    """Drop duplicate artist names (per normalize_artist_name), keeping order
+    and the FIRST spelling seen. Names normalizing equal to any in `exclude`
+    are dropped too (e.g. featured artists already credited as main)."""
+    seen = {normalize_artist_name(n) for n in exclude}
+    out: list[str] = []
+    for n in names:
+        key = normalize_artist_name(n)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(n)
+    return out
 
 
 def get_album_track_ids(source: str, resp) -> list[str]:

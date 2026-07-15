@@ -8,7 +8,7 @@ from typing import Optional
 
 from ..filepath_utils import clean_filename, clean_track_title, truncate_filepath_to_max
 from .album import AlbumMetadata
-from .util import DEFAULT_ARTIST_SEPARATOR, typed
+from .util import DEFAULT_ARTIST_SEPARATOR, dedup_artists, normalize_artist_name, typed
 
 logger = logging.getLogger("streamrip")
 
@@ -228,12 +228,11 @@ class TrackMetadata:
                     if part and part not in main_artists and part not in featured_artists:
                         featured_artists.append(part)
 
-        # Sort each group alphabetically — same behaviour as Tidal / Deezer
-        main_artists = sorted(set(main_artists))
-        featured_artists = sorted(
-            a for a in set(featured_artists)
-            if a.lower() not in {m.lower() for m in main_artists}
-        )
+        # Dedup normalizado (acentos/mayúsculas: "Rosalia" == "ROSALÍA" — Qobuz
+        # acredita al mismo artista con distinta grafía entre album.artists y el
+        # string de performers) y orden alfabético por grupo, como Tidal/Deezer.
+        main_artists = sorted(dedup_artists(main_artists))
+        featured_artists = sorted(dedup_artists(featured_artists, exclude=main_artists))
         all_artists = main_artists + featured_artists
         artist_string = artist_separator.join(all_artists) if all_artists else "Unknown"
 
@@ -300,12 +299,13 @@ class TrackMetadata:
     def from_tidal(cls, album: AlbumMetadata, resp: dict, artist_separator: str) -> TrackMetadata | None:
         title = typed(resp.get("title", "Unknown Title"), str)
         # Separate MAIN vs FEATURED artists, sort each group alphabetically — matching tiddl.
+        # Dedup normalizado por si la fuente acredita al mismo artista con distinta grafía.
         artists_raw = resp.get("artists", [])
         main_artists = sorted(
-            [a["name"] for a in artists_raw if a.get("type") == "MAIN" or not a.get("type")],
+            dedup_artists(a["name"] for a in artists_raw if a.get("type") == "MAIN" or not a.get("type")),
         )
         featured_artists = sorted(
-            [a["name"] for a in artists_raw if a.get("type") == "FEATURED"],
+            dedup_artists((a["name"] for a in artists_raw if a.get("type") == "FEATURED"), exclude=main_artists),
         )
         artist = artist_separator.join(main_artists + featured_artists) or "Unknown Artist"
         composer_raw = resp.get("composer")
@@ -375,13 +375,13 @@ class TrackMetadata:
         if isinstance(_contribs_raw, dict):
             _contribs_raw = _contribs_raw.get("data", [])
         all_contribs = [c for c in _contribs_raw if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"]]
-        dz_main = sorted([c["name"] for c in all_contribs if c.get("role") == "Main"])
-        dz_feat = sorted([c["name"] for c in all_contribs if c.get("role") == "Featured"])
+        dz_main = sorted(dedup_artists(c["name"] for c in all_contribs if c.get("role") == "Main"))
+        dz_feat = sorted(dedup_artists((c["name"] for c in all_contribs if c.get("role") == "Featured"), exclude=dz_main))
         if dz_main or dz_feat:
             artist = artist_separator.join(dz_main + dz_feat)
         else:
             # Fallback: any contributor, or single artist field
-            any_contribs = sorted([c["name"] for c in all_contribs])
+            any_contribs = sorted(dedup_artists(c["name"] for c in all_contribs))
             artist = artist_separator.join(any_contribs) if any_contribs else artist_obj.get("name", "Unknown Artist")
             dz_main = [artist] if artist else []
             # Playlist tracks: Deezer omits 'contributors' — only 'artist' (main) returned.
@@ -395,7 +395,7 @@ class TrackMetadata:
                 if feat_match:
                     feat_raw = feat_match.group(1).strip().rstrip(")")
                     feat_parts = [p.strip() for p in re.split(r'\s*[&,]\s*|\s+y\s+', feat_raw) if p.strip()]
-                    extra = [p for p in feat_parts if p.lower() != artist.lower()]
+                    extra = [p for p in feat_parts if normalize_artist_name(p) != normalize_artist_name(artist)]
                     if extra:
                         logger.debug("Playlist track missing contributors — recovered feat artist(s) from title: %s", extra)
                         artist = artist_separator.join([artist, *extra])
