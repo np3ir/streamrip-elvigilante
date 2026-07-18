@@ -74,9 +74,9 @@ class Container(Enum):
                 if k in {"tracknumber", "discnumber"}:
                     tag = str(int(tag))  # unpadded, like tiddl
                 if k == "artist":
-                    # Multi-value ARTIST (one entry per artist), like tiddl
-                    sep = getattr(meta, "artist_separator", None) or " / "
-                    out.append((v, [a.strip() for a in str(tag).split(sep) if a.strip()]))
+                    # Opcion A: un solo valor (VJ/RadioBoss no leen multivaluados).
+                    # meta.artist ya viene unido con " / " y con todos los artistas.
+                    out.append((v, str(tag).strip()))
                     continue
                 out.append((v, str(tag)))
         return out
@@ -98,9 +98,9 @@ class Container(Enum):
             elif k == "discnumber": text = [(meta.discnumber, 0)]
             elif k == "isrc" and meta.isrc is not None: text = meta.isrc.encode("utf-8")
             elif k == "artist":
-                sep = getattr(meta, "artist_separator", None) or " / "
-                names = [a.strip() for a in (self._attr_from_meta(meta, k) or "").split(sep) if a.strip()]
-                text = names or None
+                # Opcion A: un solo valor (no multivaluado)
+                s = (self._attr_from_meta(meta, k) or "").strip()
+                text = [s] if s else None
             else: text = self._attr_from_meta(meta, k)
             if v is not None and text is not None:
                 out.append((v, text))
