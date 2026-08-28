@@ -129,7 +129,7 @@ Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 Latest full run after the opt-in best-source changes:
 
-- `147 passed`
+- `149 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - `1` pre-existing warning from an AsyncMock in `test_latest_streamrip_version_creates_session`
 - Ruff clean on all modified/new files
@@ -144,7 +144,8 @@ Commands:
 
 ## Next work
 
-1. Review and remove the `Main` constructor's hard-coded AppData config override, which can ignore an explicit `--config-path`.
+1. Perform controlled live comparison using available service credentials, preview-only first.
+2. Verify delivered media properties with a single authorized temporary-directory download before considering installation changes.
 
 ## Committed opt-in best-source download
 
@@ -181,6 +182,17 @@ Committed as `49fe134 fix: stop sustained tidal rate-limit retries` (local only;
 - Tests cover exact one-shot trip semantics, invalid thresholds, pre-network rejection after trip, and a real internal 429-response path that trips before retrying.
 - Validation: Ruff clean; full suite `147 passed, 7 skipped, 1` pre-existing warning. No real service traffic or media download was performed.
 
+## Committed configuration-source correction
+
+Committed as `8976012 fix: honor selected configuration in main` (local only; not pushed).
+
+- Removed `Main`'s hard-coded secondary read of `%APPDATA%/streamrip/config.toml`; `Main` now exclusively consumes the already-loaded `Config` instance, so explicit `--config-path` and CLI session overrides remain authoritative.
+- Download folder and filename formats are no longer silently overwritten during `Main` construction.
+- Database paths come from `config.session.database`, with backward-compatible fallback under the configured download folder only when a path is empty.
+- `downloads_enabled`, `failed_downloads_enabled`, and `isrc_enabled` now select real databases or `db.Dummy()` as configured; parent directories are created only for enabled databases.
+- New `tests/test_main_config.py` places a conflicting config under a fake AppData directory and proves it is ignored, verifies exact configured database paths, and covers all disabled database backends.
+- Validation: directed tests `5 passed`; Ruff clean; full suite `149 passed, 7 skipped, 1` pre-existing warning. No real service traffic or media download was performed.
+
 ## Safety and decision constraints
 
 - Never store access tokens, ARLs, app secrets, or private configuration in this file or tests.
@@ -191,6 +203,6 @@ Committed as `49fe134 fix: stop sustained tidal rate-limit retries` (local only;
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, and the 429 circuit breaker in `49fe134`. The working tree is expected to be clean.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, and configuration-source correction in `8976012`. The product working tree is clean apart from this memory update.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
