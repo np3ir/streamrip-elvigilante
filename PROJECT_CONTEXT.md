@@ -129,7 +129,7 @@ Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 Latest full run after the opt-in best-source changes:
 
-- `149 passed`
+- `153 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - `0` runtime warnings in the final suite summary
 - Ruff clean on all modified/new files
@@ -144,8 +144,8 @@ Commands:
 
 ## Next work
 
-1. Perform controlled live comparison using available service credentials, preview-only first.
-2. Verify delivered media properties with a single authorized temporary-directory download before considering installation changes.
+1. With explicit authorization, verify delivered media properties using one temporary-directory `--download-best` run; do not target the user's music library.
+2. Add or repair Deezer credentials only if the user wants full three-service live comparison; never request them during a preview automatically.
 
 ## Committed opt-in best-source download
 
@@ -201,6 +201,21 @@ Committed as `55ee197 test: remove internal async warning` (local only; not push
 - Replaced deprecated `aiohttp.BasicAuth` construction in the TIDAL refresh flow with `aiohttp.encode_basic_auth()` and the recommended `Authorization` header.
 - Validation: Ruff clean; full suite `149 passed, 7 skipped` with no runtime-warning summary. The remaining Click `MultiCommand` deprecation appears only as a dependency log during collection.
 
+## Controlled live comparison and restored device authentication
+
+Committed as `541e9a3 fix: restore tidal device authentication` (local only; not pushed).
+
+- User supplied TIDAL reference track `524417109` for a preview-only comparison.
+- `rip compare tidal 524417109` was executed twice without `--download-best`; no audio was transferred.
+- The first two attempts stopped during TIDAL token refresh with HTTP 401 `invalid_client`; the saved refresh token was associated with a retired/unavailable OAuth client.
+- With explicit user authorization, the official device flow was restored and approved. The refreshed session was persisted through the dedicated token store and config save path; no secret values are recorded here.
+- OAuth client selection and refresh/device-token request bodies now match sibling `tiddl-elvigilante`. `invalid_client` is classified as `AuthenticationError` and automatically falls back to device authorization for an explicitly requested/reference service.
+- `TidalClient._get_device_code()` and `_get_auth_status()` were restored with pending/success handling and tests.
+- Secondary services in `rip compare` now use `prompt_on_missing=False`: missing/invalid credentials are isolated as service errors and never trigger an unexpected credential prompt. The initial all-service attempt exposed this issue by prompting for a Deezer ARL; it was cancelled without entering or changing an ARL.
+- Live preview `rip compare --service tidal tidal 524417109` succeeded and reported `FLAC / lossless / 24-bit / 44.1 kHz` with an ISRC match. No audio was transferred.
+- A subsequent all-service preview succeeded without credential prompts: TIDAL remained selected; no Qobuz match was returned and Deezer was reported unavailable due to authentication. No audio was transferred.
+- Validation: directed auth/config/CLI tests `13 passed`; Ruff clean; full suite `153 passed, 7 skipped` with no runtime-warning summary.
+
 ## Safety and decision constraints
 
 - Never store access tokens, ARLs, app secrets, or private configuration in this file or tests.
@@ -211,6 +226,6 @@ Committed as `55ee197 test: remove internal async warning` (local only; not push
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, and warning/auth cleanup in `55ee197`. Only this memory update is currently modified.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, and restored TIDAL device authentication in `541e9a3`. Only this memory update is modified.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
