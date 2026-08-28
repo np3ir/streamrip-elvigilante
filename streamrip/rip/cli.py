@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 from functools import wraps
 from typing import Any
 
@@ -28,6 +29,17 @@ def coro(f):
         return asyncio.run(f(*args, **kwargs))
 
     return wrapper
+
+
+def _is_help_invocation(argv=None) -> bool:
+    """Return whether Click was invoked only to render help.
+
+    Click runs the parent group callback before subcommand help, so without this
+    guard even ``rip compare --help`` can migrate the user's configuration.
+    """
+
+    args = sys.argv[1:] if argv is None else argv
+    return any(arg in {"-h", "--help"} for arg in args)
 
 
 @click.group(
@@ -89,6 +101,12 @@ def rip(
     ctx, config_path, folder, no_db, quality, codec, no_progress, no_ssl_verify, verbose
 ):
     """Streamrip: the all in one music downloader."""
+    ctx.ensure_object(dict)
+    if _is_help_invocation():
+        ctx.obj["config_path"] = config_path
+        ctx.obj["config"] = None
+        return
+
     global logger
     logging.basicConfig(
         level="INFO",
@@ -119,7 +137,6 @@ def rip(
         set_user_defaults(config_path)
 
     # pass to subcommands
-    ctx.ensure_object(dict)
     ctx.obj["config_path"] = config_path
 
     try:

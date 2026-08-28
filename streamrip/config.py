@@ -5,6 +5,7 @@ import functools
 import logging
 import os
 import shutil
+import tempfile
 from dataclasses import dataclass, fields
 from pathlib import Path
 
@@ -385,12 +386,32 @@ class Config:
 
         update_config(old_toml, new_toml)
 
-        with open(old_path, "w") as f:
-            f.write(dumps(new_toml))
+        directory = os.path.dirname(os.path.abspath(old_path))
+        fd, temporary = tempfile.mkstemp(
+            prefix=".streamrip-config-", suffix=".tmp", dir=directory, text=True
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(dumps(new_toml))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, old_path)
+        finally:
+            try:
+                os.remove(temporary)
+            except FileNotFoundError:
+                pass
 
     @classmethod
     def update_file(cls, path: str):
+        backup = f"{path}.bak"
+        suffix = 1
+        while os.path.exists(backup):
+            backup = f"{path}.bak.{suffix}"
+            suffix += 1
+        shutil.copy2(path, backup)
         cls._update_file(path, BLANK_CONFIG_PATH)
+        return backup
 
     @classmethod
     def defaults(cls):

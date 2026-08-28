@@ -24,7 +24,9 @@ Default fidelity policy agreed during implementation: lossless stereo FLAC outra
 - Repository lives in Google Drive. Do not put virtual environments inside it; creating many small files is extremely slow.
 - Sibling reference implementation: `..\tiddl-elvigilante` 1.5.4. Read its `AGENTS.md` before changing anything in that sibling repository. It is a reference only; do not modify/release it without explicit authorization.
 
-## Current uncommitted implementation
+## Committed multi-source implementation
+
+Checkpoint commit: `254c33c feat: add multisource quality comparison`. The commit is local on `codex/multisource-comparison`; no push occurred.
 
 ### Multi-source foundation
 
@@ -111,11 +113,21 @@ New command: `rip compare SOURCE TRACK_ID`, optionally repeating `--service` to 
 
 Important observed side effect: invoking the real `rip compare --help` on 2026-08-27 triggered Streamrip's pre-existing group-level config migration and updated `%APPDATA%\streamrip\config.toml` from schema 2.0.6 to 2.2.0. No backup file was created by the existing updater. No credentials or media were changed. Do not revert or further alter the user's config without explicit authorization. Future help tests should inspect the Click command object or use a temporary `--config-path`.
 
+## Current uncommitted config-migration safety work
+
+- `streamrip/rip/cli.py` detects help-only invocations before logging, config loading, or migration, preventing `rip compare --help` and similar help commands from mutating configuration.
+- `streamrip/config.py` creates a non-overwriting backup (`.bak`, `.bak.1`, and so on) before a real migration.
+- Config replacement is now crash-safer: write and `fsync` a same-directory temporary file, then atomically replace the original.
+- `tests/test_compare_cli.py` covers early help detection and invokes the Click command against a temporary old-schema config to prove help leaves it byte-for-byte unchanged without creating a backup.
+- `tests/test_config.py` verifies preservation of an existing backup and creation of the next numbered backup.
+- Manual real-executable validation passed: `rip --config-path <temporary-old-config> compare --help` left SHA-256 `CECA9A4A8E756C3F64BC95E78B9E88F615102109DE805D75B0025F831D63845D` unchanged and created no backup. The temporary probe was removed afterward.
+- Targeted validation: `14 passed` for `tests/test_config.py tests/test_compare_cli.py`; Ruff clean.
+
 ## Validation baseline
 
-Latest full run after the changes:
+Latest full run after the config-safety changes:
 
-- `134 passed`
+- `137 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - `1` pre-existing warning from an AsyncMock in `test_latest_streamrip_version_creates_session`
 - Ruff clean on all modified/new files
@@ -130,10 +142,9 @@ Commands:
 
 ## Next work
 
-1. Complete the checkpoint commit after setting repository-local Git identity to the existing project author (`djelvigilante`, email already present in repository history). The first commit attempt was blocked because no Git author identity was configured; do not set global Git identity.
-2. Prevent group-level config migration for help-only CLI invocations and make real migrations create a backup.
-3. Add opt-in automatic best-source download and end-to-end tests.
-4. Port tiddl's shared request budget / rate-limit safety and strengthen token refresh after the comparison path is stable.
+1. Commit the verified config-migration safety work separately.
+2. Add opt-in automatic best-source download and end-to-end tests.
+3. Port tiddl's shared request budget / rate-limit safety and strengthen token refresh after the comparison path is stable.
 
 ## Safety and decision constraints
 
@@ -145,32 +156,8 @@ Commands:
 
 ## Working tree expected at this handoff
 
-Modified:
+The multi-source foundation is committed in `254c33c`. Current uncommitted files are:
 
-- `streamrip/client/client.py`
-- `streamrip/client/downloadable.py`
-- `streamrip/client/qobuz.py`
-- `streamrip/client/tidal.py`
-- `streamrip/media/track.py`
-- `streamrip/metadata/album.py`
-- `streamrip/metadata/track.py`
-- `streamrip/rip/cli.py`
+- Modified: `streamrip/config.py`, `streamrip/rip/cli.py`, `tests/test_compare_cli.py`, `tests/test_config.py`, and this `PROJECT_CONTEXT.md` heartbeat update.
 
-New:
-
-- `PROJECT_CONTEXT.md`
-- `streamrip/audio_container.py`
-- `streamrip/client/candidate.py`
-- `streamrip/client/tidal_manifest.py`
-- `streamrip/comparison.py`
-- `streamrip/multisource.py`
-- `tests/test_comparison.py`
-- `tests/test_multisource.py`
-- `tests/test_service_candidates.py`
-- `tests/test_audio_container.py`
-- `tests/test_compare_cli.py`
-- `tests/test_tidal_manifest.py`
-- `tests/test_tidal_quality.py`
-- `tests/test_tidal_segment_download.py`
-
-These changes are staged but uncommitted. A checkpoint commit was attempted after creating `codex/multisource-comparison`, but Git rejected it because author identity was not configured. The latest commit remains `28f634a`; no push occurred.
+Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.

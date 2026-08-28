@@ -143,6 +143,21 @@ def test_config_file_update():
     os.remove("tests/test_config_old2.toml")
 
 
+def test_public_config_update_creates_non_overwriting_backup(tmp_path):
+    config_path = tmp_path / "config.toml"
+    original = open(OLD_CONFIG, "rb").read()
+    config_path.write_bytes(original)
+    existing_backup = tmp_path / "config.toml.bak"
+    existing_backup.write_text("older backup")
+
+    backup = Config.update_file(os.fspath(config_path))
+
+    assert backup == os.fspath(tmp_path / "config.toml.bak.1")
+    assert (tmp_path / "config.toml.bak.1").read_bytes() == original
+    assert existing_backup.read_text() == "older backup"
+    assert Config(os.fspath(config_path)).file.misc.version == "2.2.0"
+
+
 def test_sample_config_data_properties(sample_config_data):
     # Test the properties of ConfigData
     assert sample_config_data.modified is False  # Ensure initial state is not modified
