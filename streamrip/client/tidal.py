@@ -54,7 +54,7 @@ def _get_client_credentials() -> tuple[str, str]:
 
 
 CLIENT_ID, CLIENT_SECRET = _get_client_credentials()
-AUTH = aiohttp.BasicAuth(login=CLIENT_ID, password=CLIENT_SECRET)
+AUTHORIZATION = aiohttp.encode_basic_auth(CLIENT_ID, CLIENT_SECRET)
 
 STREAM_URL_REGEX = re.compile(
     r"#EXT-X-STREAM-INF:BANDWIDTH=\d+,AVERAGE-BANDWIDTH=\d+,CODECS=\"(?!jpeg)[^\"]+\",RESOLUTION=\d+x\d+\n(.+)"
@@ -447,7 +447,11 @@ class TidalClient(Client):
             try:
                 # Do NOT use the semaphore here: if all connections are waiting for
                 # this refresh to complete, using the semaphore would deadlock.
-                async with self.session.post(f"{AUTH_URL}/token", data=data, auth=AUTH) as resp:
+                async with self.session.post(
+                    f"{AUTH_URL}/token",
+                    data=data,
+                    headers={"Authorization": AUTHORIZATION},
+                ) as resp:
                     resp_data = await resp.json()
 
                 if resp_data.get("status", 200) != 200:
