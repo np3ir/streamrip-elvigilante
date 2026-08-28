@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from click.testing import CliRunner
 
 from streamrip.rip.cli import _is_help_invocation, rip
@@ -33,3 +35,41 @@ def test_compare_help_does_not_migrate_config(tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert config_path.read_bytes() == original
     assert not list(tmp_path.glob("config.toml.bak*"))
+
+
+def test_no_db_disables_all_database_writes(monkeypatch):
+    observed = {}
+
+    class FakeMain:
+        def __init__(self, config):
+            database = config.session.database
+            observed.update(
+                downloads=database.downloads_enabled,
+                failed=database.failed_downloads_enabled,
+                isrc=database.isrc_enabled,
+            )
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def add_by_id(self, *_args):
+            return None
+
+        async def resolve(self):
+            return None
+
+        async def rip(self):
+            return None
+
+    monkeypatch.setattr("sys.argv", ["rip", "--no-db", "id", "tidal", "track", "1"])
+    with patch("streamrip.rip.cli.Main", FakeMain):
+        result = CliRunner().invoke(
+            rip,
+            ["--config-path", "tests/test_config.toml", "--no-db", "id", "tidal", "track", "1"],
+        )
+
+    assert result.exit_code == 0
+    assert observed == {"downloads": False, "failed": False, "isrc": False}

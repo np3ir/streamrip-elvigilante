@@ -157,6 +157,7 @@ def rip(
     # set session config values to command line args
     if no_db:
         c.session.database.downloads_enabled = False
+        c.session.database.failed_downloads_enabled = False
         c.session.database.isrc_enabled = False
     if folder is not None:
         c.session.downloads.folder = folder

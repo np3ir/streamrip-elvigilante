@@ -41,7 +41,8 @@ def test_parses_dash_segments_and_hires_profile():
     xml = """<?xml version="1.0"?>
     <MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
       <Period><AdaptationSet><Representation codecs="flac" mimeType="audio/mp4">
-        <SegmentTemplate media="https://media/$Number$.m4s" startNumber="1">
+        <SegmentTemplate initialization="https://media/init.mp4"
+                         media="https://media/$Number$.m4s" startNumber="1">
           <SegmentTimeline><S d="1" r="2"/><S d="1"/></SegmentTimeline>
         </SegmentTemplate>
       </Representation></AdaptationSet></Period>
@@ -56,7 +57,10 @@ def test_parses_dash_segments_and_hires_profile():
             "sampleRate": 96000,
         }
     )
-    assert result.urls == tuple(f"https://media/{i}.m4s" for i in range(1, 5))
+    assert result.urls == (
+        "https://media/init.mp4",
+        *(f"https://media/{i}.m4s" for i in range(1, 5)),
+    )
     assert result.mime_type == "audio/mp4"
     assert result.quality.rank > parse_tidal_manifest(
         {

@@ -50,8 +50,14 @@ def _dash_urls(root: ElementTree.Element) -> tuple[tuple[str, ...], str, str | N
         count += int(item.get("r", "0")) + 1
     if count == 0:
         raise ValueError("TIDAL DASH manifest has no segments")
+    media_urls = tuple(
+        template.replace("$Number$", str(i))
+        for i in range(start_number, start_number + count)
+    )
+    initialization = segment.get("initialization")
+    urls = (initialization, *media_urls) if initialization else media_urls
     return (
-        tuple(template.replace("$Number$", str(i)) for i in range(start_number, start_number + count)),
+        urls,
         codec,
         mime_type,
     )
@@ -106,4 +112,3 @@ def parse_tidal_manifest(response: dict) -> TidalManifest:
         restrictions=tuple(manifest.get("restrictions") or ()),
         quality=quality,
     )
-
