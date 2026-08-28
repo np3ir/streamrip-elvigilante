@@ -5,8 +5,6 @@ import platform
 import re
 import sys
 
-import tomllib  # Native in Python 3.11+
-
 from .. import db
 from ..client import Client, DeezerClient, QobuzClient, SoundcloudClient, TidalClient
 from ..config import Config
@@ -32,46 +30,14 @@ if platform.system() == "Windows":
 class Main:
     def __init__(self, config: Config):
         self.config = config
-
-        # --- BRUTE FORCE: LOAD CONFIG.TOML FROM APPDATA ---
-        try:
-            appdata = os.environ.get("APPDATA")
-            manual_config_path = os.path.join(appdata, "streamrip", "config.toml")
-
-            # Default values in case reading fails
-            target_folder = config.session.downloads.folder
-            db_path = os.path.join(target_folder, "downloads.db")
-            failed_db_path = os.path.join(target_folder, "failed_downloads.db")
-
-            if os.path.exists(manual_config_path):
-                with open(manual_config_path, "rb") as f:
-                    data = tomllib.load(f)
-
-                # 1. Force Download Folder
-                if "downloads" in data and "folder" in data["downloads"]:
-                    target_folder = data["downloads"]["folder"]
-                    self.config.session.downloads.folder = target_folder
-
-                # 2. Force Folder Format
-                if "filepaths" in data:
-                    if "folder_format" in data["filepaths"]:
-                        self.config.session.filepaths.folder_format = data["filepaths"]["folder_format"]
-                    if "track_format" in data["filepaths"]:
-                        self.config.session.filepaths.track_format = data["filepaths"]["track_format"]
-
-                # 3. Read Database Paths
-                if "database" in data:
-                    if "downloads_path" in data["database"]:
-                        db_path = data["database"]["downloads_path"]
-                    if "failed_downloads_path" in data["database"]:
-                        failed_db_path = data["database"]["failed_downloads_path"]
-            else:
-                os.makedirs(target_folder, exist_ok=True)
-
-        except Exception:
-            target_folder = config.session.downloads.folder
-            db_path = os.path.join(target_folder, "downloads.db")
-            failed_db_path = os.path.join(target_folder, "failed_downloads.db")
+        target_folder = config.session.downloads.folder
+        database_config = config.session.database
+        db_path = database_config.downloads_path or os.path.join(
+            target_folder, "downloads.db"
+        )
+        failed_db_path = database_config.failed_downloads_path or os.path.join(
+            target_folder, "failed_downloads.db"
+        )
 
         # Initialize Clients
         self.clients: dict[str, Client] = {
@@ -82,15 +48,26 @@ class Main:
         }
 
         # Initialize Database with correct paths
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        os.makedirs(os.path.dirname(failed_db_path), exist_ok=True)
-
-        downloads_db = db.Downloads(db_path)
-        failed_downloads_db = db.Failed(failed_db_path)
+        if database_config.downloads_enabled:
+            os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+            downloads_db = db.Downloads(db_path)
+        else:
+            downloads_db = db.Dummy()
+        if database_config.failed_downloads_enabled:
+            os.makedirs(os.path.dirname(os.path.abspath(failed_db_path)), exist_ok=True)
+            failed_downloads_db = db.Failed(failed_db_path)
+        else:
+            failed_downloads_db = db.Dummy()
 
         # ISRC cross-source deduplication DB — same folder as downloads DB.
-        isrc_db_path = os.path.join(os.path.dirname(db_path), "isrc_downloaded.db")
-        isrc_db = db.DownloadedISRCs(isrc_db_path) if config.session.database.isrc_enabled else db.Dummy()
+        isrc_db_path = os.path.join(
+            os.path.dirname(os.path.abspath(db_path)), "isrc_downloaded.db"
+        )
+        isrc_db = (
+            db.DownloadedISRCs(isrc_db_path)
+            if database_config.isrc_enabled is True
+            else db.Dummy()
+        )
 
         self.database = db.Database(downloads_db, failed_downloads_db, isrc_db)
         # -----------------------------------------------------------
