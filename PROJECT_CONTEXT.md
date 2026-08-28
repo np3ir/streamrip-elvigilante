@@ -131,7 +131,7 @@ Latest full run after the opt-in best-source changes:
 
 - `149 passed`
 - `7 skipped` (credentials/integration tests unavailable)
-- `1` pre-existing warning from an AsyncMock in `test_latest_streamrip_version_creates_session`
+- `0` runtime warnings in the final suite summary
 - Ruff clean on all modified/new files
 - `git diff --check` clean except informational LF-to-CRLF warnings on Windows
 
@@ -193,6 +193,14 @@ Committed as `8976012 fix: honor selected configuration in main` (local only; no
 - New `tests/test_main_config.py` places a conflicting config under a fake AppData directory and proves it is ignored, verifies exact configured database paths, and covers all disabled database backends.
 - Validation: directed tests `5 passed`; Ruff clean; full suite `149 passed, 7 skipped, 1` pre-existing warning. No real service traffic or media download was performed.
 
+## Committed warning and aiohttp-auth cleanup
+
+Committed as `55ee197 test: remove internal async warning` (local only; not pushed).
+
+- Corrected `test_latest_streamrip_version_creates_session` to model aiohttp's synchronous context-manager factories and asynchronous enter/exit/JSON methods accurately; the test now asserts the parsed release result instead of swallowing exceptions.
+- Replaced deprecated `aiohttp.BasicAuth` construction in the TIDAL refresh flow with `aiohttp.encode_basic_auth()` and the recommended `Authorization` header.
+- Validation: Ruff clean; full suite `149 passed, 7 skipped` with no runtime-warning summary. The remaining Click `MultiCommand` deprecation appears only as a dependency log during collection.
+
 ## Safety and decision constraints
 
 - Never store access tokens, ARLs, app secrets, or private configuration in this file or tests.
@@ -203,6 +211,6 @@ Committed as `8976012 fix: honor selected configuration in main` (local only; no
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, and configuration-source correction in `8976012`. The product working tree is clean apart from this memory update.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, and warning/auth cleanup in `55ee197`. Only this memory update is currently modified.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
