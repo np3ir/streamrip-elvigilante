@@ -129,7 +129,7 @@ Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 Latest full run after the opt-in best-source changes:
 
-- `153 passed`
+- `154 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - `0` runtime warnings in the final suite summary
 - Ruff clean on all modified/new files
@@ -144,8 +144,9 @@ Commands:
 
 ## Next work
 
-1. With explicit authorization, verify delivered media properties using one temporary-directory `--download-best` run; do not target the user's music library.
+1. Remove the two exact temporary live-validation directories after user confirmation or through an allowed safe cleanup mechanism; both paths are listed below.
 2. Add or repair Deezer credentials only if the user wants full three-service live comparison; never request them during a preview automatically.
+3. Decide whether to prepare a side-by-side 2.2.8 installation without replacing global `rip 2.1.0`.
 
 ## Committed opt-in best-source download
 
@@ -216,6 +217,19 @@ Committed as `541e9a3 fix: restore tidal device authentication` (local only; not
 - A subsequent all-service preview succeeded without credential prompts: TIDAL remained selected; no Qobuz match was returned and Deezer was reported unavailable due to authentication. No audio was transferred.
 - Validation: directed auth/config/CLI tests `13 passed`; Ruff clean; full suite `153 passed, 7 skipped` with no runtime-warning summary.
 
+## Controlled live download and DASH construction fix
+
+Committed as `e76eaa5 fix: assemble complete tidal dash streams` (local only; not pushed).
+
+- User explicitly authorized one real `--download-best` test for TIDAL track `524417109`, isolated with a unique temporary download folder and `--no-db`.
+- `--no-db` now disables downloads, failed-downloads, and ISRC databases together; regression coverage proves no database backend can be written during such a test.
+- The first live file exposed an actual DASH assembly defect: only media fragments were concatenated, producing an MP4 fragment stream with no initialization metadata; FFprobe rejected it with missing `tfhd`/header errors.
+- `tidal_manifest._dash_urls()` now prepends `SegmentTemplate@initialization` before all numbered media segments. The manifest regression test pins exact initialization-first ordering.
+- Repeating the authorized download after the fix succeeded and the normal TIDAL container normalization extracted a valid FLAC without transcoding.
+- FFprobe verification of the corrected file: native FLAC, 24-bit (`bits_per_raw_sample=24`), 44,100 Hz, 2 channels, duration 197.872676 s, size 36,606,842 bytes. The file also contains embedded MJPEG cover art. SHA-256 was `B1B3F499E2BDD3B65AE273776C4A3AAFDE60A78C4E9AA2652FB606CD38BEEC80`.
+- Validation: Ruff clean; full suite `154 passed, 7 skipped`. No user-library database or destination was used.
+- Cleanup risk/status: automated recursive removal was rejected by the execution policy, so two exact temporary directories remain under `%TEMP%`: `streamrip-live-validation-1271bd2f7aaa47388251d69bbd73ddd1` (invalid first artifact) and `streamrip-live-validation-fixed-a9998064735747169b53c645e826e99c` (verified FLAC). They are outside the repository and user music library.
+
 ## Safety and decision constraints
 
 - Never store access tokens, ARLs, app secrets, or private configuration in this file or tests.
@@ -226,6 +240,6 @@ Committed as `541e9a3 fix: restore tidal device authentication` (local only; not
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, and restored TIDAL device authentication in `541e9a3`. Only this memory update is modified.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, and DASH initialization fix in `e76eaa5`. Only this memory update is modified.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
