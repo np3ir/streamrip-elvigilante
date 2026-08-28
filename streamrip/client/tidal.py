@@ -15,6 +15,7 @@ from ..config import Config
 from ..exceptions import NonStreamableError
 from .client import Client
 from .downloadable import TidalDownloadable, TidalVideoDownloadable
+from .request_budget import SharedRequestBudget
 from .tidal_manifest import parse_tidal_manifest
 
 logger = logging.getLogger("streamrip")
@@ -114,7 +115,7 @@ class TidalClient(Client):
     source = "tidal"
     max_quality = 4
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, request_budget: SharedRequestBudget | None = None):
         self.logged_in = False
         self.global_config = config
         self.config = config.session.tidal
@@ -129,9 +130,7 @@ class TidalClient(Client):
         safe_conn = max_conn if (0 < max_conn <= 12) else 2
 
         self.semaphore = asyncio.Semaphore(safe_conn)
-        self._rate_lock = asyncio.Lock()
-        self._last_request_time = 0.0
-        self._min_interval = 60.0 / safe_rpm  # e.g. 1.0s at 60 RPM
+        self.request_budget = request_budget or SharedRequestBudget(safe_rpm)
         self._rate_limit_delay: float = 0.0  # Adaptive: grows on 429, shrinks on success
         # --------------------------------------------
 
@@ -417,10 +416,22 @@ class TidalClient(Client):
         except Exception as e:
             logger.warning(f"Could not persist Tidal token: {e}")
 
-    async def _refresh_access_token(self):
+    async def _refresh_access_token(
+        self,
+        *,
+        force: bool = False,
+        stale_access_token: str | None = None,
+    ):
         async with self.auth_lock:
-            # Skip if token was already refreshed by a concurrent request
-            if self.config.token_expiry and (float(self.config.token_expiry) - time.time() > _REFRESH_THRESHOLD): return
+            # A concurrent 401 handler may already have replaced the failed token.
+            if stale_access_token and self.config.access_token != stale_access_token:
+                return
+            if (
+                not force
+                and self.config.token_expiry
+                and float(self.config.token_expiry) - time.time() > _REFRESH_THRESHOLD
+            ):
+                return
             logger.info("Refreshing Tidal token...")
             data = {"client_id": CLIENT_ID, "refresh_token": self.refresh_token, "grant_type": "refresh_token", "scope": "r_usr+w_usr+w_sub"}
             try:
@@ -531,19 +542,13 @@ class TidalClient(Client):
             if self._rate_limit_delay > 0:
                 await asyncio.sleep(self._rate_limit_delay)
 
-            # Fixed interval + small jitter (global, no burst)
-            async with self._rate_lock:
-                now = asyncio.get_event_loop().time()
-                elapsed = now - self._last_request_time
-                wait = self._min_interval - elapsed + random.uniform(0, 0.3)
-                if wait > 0:
-                    await asyncio.sleep(wait)
-                self._last_request_time = asyncio.get_event_loop().time()
+            await self.request_budget.acquire()
 
             async with self.semaphore:
 
                 url = path if path.startswith("http") else f"{base}/{path}"
                 try:
+                    failed_access_token = self.config.access_token
                     async with self.session.get(url, params=params, timeout=ClientTimeout(total=30)) as resp:
                         if resp.status == 429:
                             self._rate_limit_delay = min(5.0, self._rate_limit_delay + 1.0)
@@ -553,7 +558,10 @@ class TidalClient(Client):
                             continue
                         if resp.status == 401:
                             if attempt < 2:
-                                await self._refresh_access_token()
+                                await self._refresh_access_token(
+                                    force=True,
+                                    stale_access_token=failed_access_token,
+                                )
                                 continue
                             else:
                                 raise Exception("Unauthorized (401)")
@@ -570,7 +578,10 @@ class TidalClient(Client):
                     continue
                 except Exception as e:
                     if "401" in str(e) and attempt < 2:
-                        await self._refresh_access_token()
+                        await self._refresh_access_token(
+                            force=True,
+                            stale_access_token=failed_access_token,
+                        )
                         continue
                     if attempt == retries:
                         raise e

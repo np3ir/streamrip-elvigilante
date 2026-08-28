@@ -102,14 +102,14 @@ New `streamrip/comparison.py`:
 
 Tests: `tests/test_service_candidates.py` and `tests/test_comparison.py`.
 
-### CLI comparison preview
+### CLI comparison and opt-in best-source download
 
 New command: `rip compare SOURCE TRACK_ID`, optionally repeating `--service` to limit compared services.
 
 - Logs into only the requested/reference services.
 - Reuses the inspected reference candidate instead of requesting its manifest twice.
 - Displays service, match type, normalized quality, winner, and isolated service errors.
-- It is preview-only and never transfers media.
+- It is preview-only by default. Media transfer occurs only with explicit `--download-best`.
 
 Important observed side effect: invoking the real `rip compare --help` on 2026-08-27 triggered Streamrip's pre-existing group-level config migration and updated `%APPDATA%\streamrip\config.toml` from schema 2.0.6 to 2.2.0. No backup file was created by the existing updater. No credentials or media were changed. Do not revert or further alter the user's config without explicit authorization. Future help tests should inspect the Click command object or use a temporary `--config-path`.
 
@@ -127,9 +127,9 @@ Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 ## Validation baseline
 
-Latest full run after the config-safety changes:
+Latest full run after the opt-in best-source changes:
 
-- `139 passed`
+- `143 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - `1` pre-existing warning from an AsyncMock in `test_latest_streamrip_version_creates_session`
 - Ruff clean on all modified/new files
@@ -144,10 +144,13 @@ Commands:
 
 ## Next work
 
-1. Commit the verified opt-in best-source download work separately.
-2. Port tiddl's shared request budget / rate-limit safety and strengthen token refresh after the comparison path is stable.
+1. Commit the verified TIDAL request-budget and forced-refresh work separately.
+2. Add a bounded run-wide 429 circuit breaker so sustained throttling stops safely instead of multiplying retries.
+3. Review and remove the `Main` constructor's hard-coded AppData config override, which can ignore an explicit `--config-path`.
 
-## Current uncommitted opt-in best-source download
+## Committed opt-in best-source download
+
+Committed as `16d01df feat: download best matching source` (local only; not pushed).
 
 - `rip compare SOURCE TRACK_ID` remains preview-only by default.
 - New `--download-best` flag queues exactly the selected candidate through the existing `Main.add_by_id(..., "track", ...)` and `Main.rip()` pipeline, preserving normal metadata, paths, retries, tagging, database, and TIDAL container normalization.
@@ -156,6 +159,16 @@ Commands:
 - Tests prove only the winner is queued and the no-candidate case cannot start a download.
 - Real `rip compare --help` shows the opt-in flag and exits without configuration migration.
 - Validation: Ruff clean; full suite `139 passed, 7 skipped, 1` pre-existing warning. No real service login or media download was performed.
+
+## Current uncommitted TIDAL request safety and token refresh
+
+- New `streamrip/client/request_budget.py::SharedRequestBudget` provides an async fixed-interval request budget with one lock, no initial wait, injected clock/sleeper/jitter for deterministic tests, and a count of admitted real API requests.
+- `TidalClient` accepts an optional shared budget and otherwise creates one per client/run from the effective `requests_per_minute` setting. All `_api_request` attempts, including retries, consume one budget slot.
+- The older `_rate_lock`, `_last_request_time`, and inline spacing calculation were removed; adaptive 429 delay and bounded connection semaphore remain compatible.
+- Fixed a concrete 401 bug: `_api_request` now forces token refresh even when the locally recorded expiry is still more than one hour away.
+- Forced refresh carries the access token that actually failed. Under `auth_lock`, a second concurrent 401 observes that another coroutine already replaced that token and avoids a duplicate refresh request.
+- New tests: `tests/test_request_budget.py` and `tests/test_tidal_auth.py` cover concurrent spacing, safe default RPM, forced 401 refresh, and concurrent-refresh deduplication.
+- Validation: directed tests `7 passed`; Ruff clean; full suite `143 passed, 7 skipped, 1` pre-existing warning. No real service traffic or media download was performed.
 
 ## Safety and decision constraints
 
@@ -167,8 +180,6 @@ Commands:
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c` and migration safety in `83a5f99`. Current uncommitted files are:
-
-- Modified: `streamrip/comparison.py`, `streamrip/rip/cli.py`, `tests/test_comparison.py`, `tests/test_compare_cli.py`, and this `PROJECT_CONTEXT.md` update.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, and opt-in best-source download in `16d01df`. Current uncommitted files are `streamrip/client/tidal.py`, new `streamrip/client/request_budget.py`, new `tests/test_request_budget.py`, new `tests/test_tidal_auth.py`, and this memory update.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
