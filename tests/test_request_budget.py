@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from streamrip.client.request_budget import SharedRequestBudget
+from streamrip.client.request_budget import RateLimitGuard, SharedRequestBudget
 
 
 class FakeClock:
@@ -40,3 +40,19 @@ async def test_nonpositive_rpm_uses_safe_default():
     budget = SharedRequestBudget(0, jitter=lambda: 0.0)
 
     assert budget.interval == 1.0
+
+
+def test_rate_limit_guard_trips_once_and_stays_tripped():
+    guard = RateLimitGuard(strike_limit=3)
+
+    assert guard.note_rate_limited() is False
+    assert guard.note_rate_limited() is False
+    assert guard.note_rate_limited() is True
+    assert guard.note_rate_limited() is False
+    assert guard.strikes == 4
+    assert guard.tripped is True
+
+
+def test_rate_limit_guard_rejects_nonpositive_limit():
+    with pytest.raises(ValueError, match="positive"):
+        RateLimitGuard(strike_limit=0)

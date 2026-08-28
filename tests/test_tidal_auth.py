@@ -5,7 +5,9 @@ from unittest.mock import Mock
 
 import pytest
 
+from streamrip.client.request_budget import RateLimitGuard
 from streamrip.client.tidal import TidalClient
+from streamrip.exceptions import TidalRateLimitError
 
 
 class FakeResponse:
@@ -33,6 +35,33 @@ class FakeSession:
     def post(self, *_args, **_kwargs):
         self.post_calls += 1
         return ResponseContext()
+
+
+class RateLimitedResponse:
+    status = 429
+
+    def __init__(self):
+        self.headers = {"Retry-After": "60"}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+
+class RateLimitedSession:
+    def __init__(self):
+        self.get_calls = 0
+
+    def get(self, *_args, **_kwargs):
+        self.get_calls += 1
+        return RateLimitedResponse()
+
+
+class ImmediateBudget:
+    async def acquire(self):
+        return None
 
 
 def tidal_client(access_token="old-token"):
@@ -76,3 +105,30 @@ async def test_concurrent_401_does_not_refresh_token_twice():
     )
 
     assert client.session.post_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_tripped_rate_limit_guard_rejects_request_before_network():
+    client = object.__new__(TidalClient)
+    client.rate_limit_guard = RateLimitGuard(strike_limit=1)
+    client.rate_limit_guard.note_rate_limited()
+
+    with pytest.raises(TidalRateLimitError, match="already reached"):
+        await client._api_request("tracks/1")
+
+
+@pytest.mark.asyncio
+async def test_429_that_reaches_limit_trips_before_retrying():
+    client = object.__new__(TidalClient)
+    client.rate_limit_guard = RateLimitGuard(strike_limit=1)
+    client.request_budget = ImmediateBudget()
+    client.semaphore = asyncio.Semaphore(1)
+    client.session = RateLimitedSession()
+    client.config = SimpleNamespace(country_code="US", access_token="token")
+    client._rate_limit_delay = 0.0
+
+    with pytest.raises(TidalRateLimitError, match="repeatedly returned HTTP 429"):
+        await client._api_request("tracks/1")
+
+    assert client.session.get_calls == 1
+    assert client.rate_limit_guard.tripped is True

@@ -129,7 +129,7 @@ Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 Latest full run after the opt-in best-source changes:
 
-- `143 passed`
+- `147 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - `1` pre-existing warning from an AsyncMock in `test_latest_streamrip_version_creates_session`
 - Ruff clean on all modified/new files
@@ -144,7 +144,7 @@ Commands:
 
 ## Next work
 
-1. Add a bounded run-wide 429 circuit breaker so sustained throttling stops safely instead of multiplying retries.
+1. Commit the verified TIDAL 429 circuit breaker separately.
 2. Review and remove the `Main` constructor's hard-coded AppData config override, which can ignore an explicit `--config-path`.
 
 ## Committed opt-in best-source download
@@ -171,6 +171,15 @@ Committed as `90ac62a fix: harden tidal request pacing and refresh` (local only;
 - New tests: `tests/test_request_budget.py` and `tests/test_tidal_auth.py` cover concurrent spacing, safe default RPM, forced 401 refresh, and concurrent-refresh deduplication.
 - Validation: directed tests `7 passed`; Ruff clean; full suite `143 passed, 7 skipped, 1` pre-existing warning. No real service traffic or media download was performed.
 
+## Current uncommitted TIDAL 429 circuit breaker
+
+- `RateLimitGuard` counts HTTP 429 responses for the current TIDAL client/run and trips once at a deliberately tolerant default of 12 strikes.
+- A few transient 429 responses continue through the existing `Retry-After` and adaptive-backoff path.
+- The response that reaches the threshold raises `TidalRateLimitError` before another retry is scheduled; every later TIDAL API call fails immediately without network access.
+- Track/video playback fallback paths explicitly preserve this safety exception rather than hiding it as an ordinary unavailable-quality fallback.
+- Tests cover exact one-shot trip semantics, invalid thresholds, pre-network rejection after trip, and a real internal 429-response path that trips before retrying.
+- Validation: Ruff clean; full suite `147 passed, 7 skipped, 1` pre-existing warning. No real service traffic or media download was performed.
+
 ## Safety and decision constraints
 
 - Never store access tokens, ARLs, app secrets, or private configuration in this file or tests.
@@ -181,6 +190,6 @@ Committed as `90ac62a fix: harden tidal request pacing and refresh` (local only;
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, and TIDAL request/refresh safety in `90ac62a`. The product working tree was clean before this memory correction; only `PROJECT_CONTEXT.md` is modified.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, and TIDAL request/refresh safety in `90ac62a`. Current uncommitted files are `streamrip/exceptions.py`, `streamrip/client/request_budget.py`, `streamrip/client/tidal.py`, `tests/test_request_budget.py`, `tests/test_tidal_auth.py`, and this memory update.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.

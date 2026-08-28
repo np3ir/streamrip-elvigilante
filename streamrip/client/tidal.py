@@ -12,10 +12,10 @@ import click
 from aiohttp import ClientSession, ClientTimeout, CookieJar, TCPConnector
 
 from ..config import Config
-from ..exceptions import NonStreamableError
+from ..exceptions import NonStreamableError, TidalRateLimitError
 from .client import Client
 from .downloadable import TidalDownloadable, TidalVideoDownloadable
-from .request_budget import SharedRequestBudget
+from .request_budget import RateLimitGuard, SharedRequestBudget
 from .tidal_manifest import parse_tidal_manifest
 
 logger = logging.getLogger("streamrip")
@@ -115,7 +115,12 @@ class TidalClient(Client):
     source = "tidal"
     max_quality = 4
 
-    def __init__(self, config: Config, request_budget: SharedRequestBudget | None = None):
+    def __init__(
+        self,
+        config: Config,
+        request_budget: SharedRequestBudget | None = None,
+        rate_limit_guard: RateLimitGuard | None = None,
+    ):
         self.logged_in = False
         self.global_config = config
         self.config = config.session.tidal
@@ -131,6 +136,7 @@ class TidalClient(Client):
 
         self.semaphore = asyncio.Semaphore(safe_conn)
         self.request_budget = request_budget or SharedRequestBudget(safe_rpm)
+        self.rate_limit_guard = rate_limit_guard or RateLimitGuard()
         self._rate_limit_delay: float = 0.0  # Adaptive: grows on 429, shrinks on success
         # --------------------------------------------
 
@@ -332,6 +338,8 @@ class TidalClient(Client):
                 params = {"audioquality": q_val, "playbackmode": "STREAM", "assetpresentation": "FULL", "prefetch": "false"}
                 try:
                     resp = await self._api_request(f"tracks/{track_id}/playbackinfopostpaywall/v4", params, base=API_BASE)
+                except TidalRateLimitError:
+                    raise
                 except:
                     resp = await self._api_request(f"tracks/{track_id}/playbackinfopostpaywall", params, base=API_BASE)
 
@@ -349,7 +357,7 @@ class TidalClient(Client):
                     return downloadable
                 if best_lossy is None or manifest.quality.rank > best_lossy.quality.rank:
                     best_lossy = downloadable
-            except NonStreamableError:
+            except (NonStreamableError, TidalRateLimitError):
                 raise
             except Exception as e:
                 last_err = e
@@ -372,6 +380,8 @@ class TidalClient(Client):
         
         try:
             resp = await self._api_request(f"videos/{video_id}/playbackinfopostpaywall/v4", params, base=API_BASE)
+        except TidalRateLimitError:
+            raise
         except:
             resp = await self._api_request(f"videos/{video_id}/playbackinfopostpaywall", params, base=API_BASE)
 
@@ -533,6 +543,10 @@ class TidalClient(Client):
             async with self.session.post(url, data=data, auth=auth) as resp: return await resp.json()
 
     async def _api_request(self, path: str, params=None, base: str = API_BASE, retries: int = 10) -> dict:
+        if self.rate_limit_guard.tripped:
+            raise TidalRateLimitError(
+                "TIDAL request safety limit already reached; retry this run later"
+            )
         if params is None: params = {}
         if "countryCode" not in params: params["countryCode"] = self.config.country_code
         if "limit" not in params: params["limit"] = 100
@@ -552,6 +566,11 @@ class TidalClient(Client):
                     async with self.session.get(url, params=params, timeout=ClientTimeout(total=30)) as resp:
                         if resp.status == 429:
                             self._rate_limit_delay = min(5.0, self._rate_limit_delay + 1.0)
+                            if self.rate_limit_guard.note_rate_limited():
+                                raise TidalRateLimitError(
+                                    "TIDAL repeatedly returned HTTP 429; stopping this run "
+                                    "to protect the account"
+                                )
                             wait = int(resp.headers.get("Retry-After", 10)) + random.randint(5, 10)
                             logger.debug(f"Rate Limit hit. Backing off {wait}s... (adaptive_delay={self._rate_limit_delay:.1f}s)")
                             await asyncio.sleep(wait)
@@ -573,6 +592,8 @@ class TidalClient(Client):
                             return await resp.json()
                         except:
                             return json.loads(await resp.text())
+                except TidalRateLimitError:
+                    raise
                 except (aiohttp.ClientOSError, asyncio.TimeoutError):
                     await asyncio.sleep(2)
                     continue

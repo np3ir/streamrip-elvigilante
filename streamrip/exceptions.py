@@ -68,3 +68,7 @@ class NonStreamableError(Exception):
 
 class ConversionError(Exception):
     """ConversionError."""
+
+
+class TidalRateLimitError(Exception):
+    """TIDAL throttled the current run enough to trip its safety breaker."""

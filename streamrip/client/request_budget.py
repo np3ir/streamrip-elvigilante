@@ -6,6 +6,26 @@ import asyncio
 import random
 from collections.abc import Awaitable, Callable
 
+DEFAULT_429_STRIKE_LIMIT = 12
+
+
+class RateLimitGuard:
+    """Count 429 responses and trip once at a bounded per-run threshold."""
+
+    def __init__(self, strike_limit: int = DEFAULT_429_STRIKE_LIMIT) -> None:
+        if strike_limit <= 0:
+            raise ValueError("strike_limit must be positive")
+        self.strike_limit = strike_limit
+        self.strikes = 0
+        self.tripped = False
+
+    def note_rate_limited(self) -> bool:
+        self.strikes += 1
+        if self.strikes >= self.strike_limit and not self.tripped:
+            self.tripped = True
+            return True
+        return False
+
 
 class SharedRequestBudget:
     """Pace all API requests sharing this instance at one combined RPM."""
