@@ -129,7 +129,7 @@ Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 Latest full run after the opt-in best-source changes:
 
-- `154 passed`
+- `155 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - `0` runtime warnings in the final suite summary
 - Ruff clean on all modified/new files
@@ -230,6 +230,17 @@ Committed as `e76eaa5 fix: assemble complete tidal dash streams` (local only; no
 - Validation: Ruff clean; full suite `154 passed, 7 skipped`. No user-library database or destination was used.
 - Cleanup risk/status: automated recursive removal was rejected by the execution policy, so two exact temporary directories remain under `%TEMP%`: `streamrip-live-validation-1271bd2f7aaa47388251d69bbd73ddd1` (invalid first artifact) and `streamrip-live-validation-fixed-a9998064735747169b53c645e826e99c` (verified FLAC). They are outside the repository and user music library.
 
+## TIDAL single-album metadata correction
+
+Committed as `97a2c2d fix: resolve tidal single album metadata` (local only; not pushed).
+
+- The successful live download revealed a metadata-path defect: the single folder used `1970-01-01` from the summarized track's `streamStartDate` even though the release is current.
+- `PendingSingle` now fetches the full TIDAL album response using the embedded album ID and builds `AlbumMetadata` from that authoritative response. If the album request fails, it logs at debug level and retains the previous embedded-track fallback.
+- The fallback date priority now prefers `releaseDate`, normalized `date`, and embedded album `releaseDate` before `streamStartDate`/`dateAdded`.
+- A live metadata-only query for track `524417109` resolved album `524417108`, title `real still loving you`, and authoritative release date `2026-05-13`; no audio was downloaded in this verification.
+- New regression test proves a bogus 1970 track start date cannot override the full album's 2026 release date.
+- Validation: Ruff clean; full suite `155 passed, 7 skipped`.
+
 ## Safety and decision constraints
 
 - Never store access tokens, ARLs, app secrets, or private configuration in this file or tests.
@@ -240,6 +251,6 @@ Committed as `e76eaa5 fix: assemble complete tidal dash streams` (local only; no
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, and DASH initialization fix in `e76eaa5`. Only this memory update is modified.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, and TIDAL single metadata correction in `97a2c2d`. Only this memory update is modified.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
