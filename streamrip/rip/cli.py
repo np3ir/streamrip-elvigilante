@@ -407,6 +407,11 @@ async def search(ctx, first, output_file, num_results, source, media_type, query
 
 @rip.command("compare")
 @click.option(
+    "--download-best",
+    is_flag=True,
+    help="Download only the highest-fidelity matching track after comparison.",
+)
+@click.option(
     "--service",
     "services",
     multiple=True,
@@ -420,12 +425,10 @@ async def search(ctx, first, output_file, num_results, source, media_type, query
 @click.argument("track-id")
 @click.pass_context
 @coro
-async def compare_sources(ctx, services, source, track_id):
-    """Preview the best source for a reference track without downloading audio."""
+async def compare_sources(ctx, download_best, services, source, track_id):
+    """Compare a track across services; downloading is opt-in."""
 
-    from rich.table import Table
-
-    from ..comparison import MultiSourceComparator, format_quality
+    from ..comparison import MultiSourceComparator, download_selected, format_quality
     from ..multisource import match_tracks
 
     if ctx.obj["config"] is None:
@@ -463,6 +466,18 @@ async def compare_sources(ctx, services, source, track_id):
                 reference_candidate=reference_candidate,
             )
             report.errors.update(login_errors)
+
+            _print_comparison_report(report, format_quality, match_tracks)
+            if download_best and report.selected is not None:
+                selected = await download_selected(main, report)
+                console.print(
+                    f"[green]Downloaded best source:[/green] "
+                    f"{selected.identity.source}"
+                )
+
+
+def _print_comparison_report(report, format_quality, match_tracks):
+    from rich.table import Table
 
     table = Table(title="Cross-service audio comparison")
     table.add_column("Service")

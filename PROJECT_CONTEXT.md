@@ -113,7 +113,9 @@ New command: `rip compare SOURCE TRACK_ID`, optionally repeating `--service` to 
 
 Important observed side effect: invoking the real `rip compare --help` on 2026-08-27 triggered Streamrip's pre-existing group-level config migration and updated `%APPDATA%\streamrip\config.toml` from schema 2.0.6 to 2.2.0. No backup file was created by the existing updater. No credentials or media were changed. Do not revert or further alter the user's config without explicit authorization. Future help tests should inspect the Click command object or use a temporary `--config-path`.
 
-## Current uncommitted config-migration safety work
+## Config-migration safety
+
+Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 - `streamrip/rip/cli.py` detects help-only invocations before logging, config loading, or migration, preventing `rip compare --help` and similar help commands from mutating configuration.
 - `streamrip/config.py` creates a non-overwriting backup (`.bak`, `.bak.1`, and so on) before a real migration.
@@ -127,7 +129,7 @@ Important observed side effect: invoking the real `rip compare --help` on 2026-0
 
 Latest full run after the config-safety changes:
 
-- `137 passed`
+- `139 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - `1` pre-existing warning from an AsyncMock in `test_latest_streamrip_version_creates_session`
 - Ruff clean on all modified/new files
@@ -142,9 +144,18 @@ Commands:
 
 ## Next work
 
-1. Commit the verified config-migration safety work separately.
-2. Add opt-in automatic best-source download and end-to-end tests.
-3. Port tiddl's shared request budget / rate-limit safety and strengthen token refresh after the comparison path is stable.
+1. Commit the verified opt-in best-source download work separately.
+2. Port tiddl's shared request budget / rate-limit safety and strengthen token refresh after the comparison path is stable.
+
+## Current uncommitted opt-in best-source download
+
+- `rip compare SOURCE TRACK_ID` remains preview-only by default.
+- New `--download-best` flag queues exactly the selected candidate through the existing `Main.add_by_id(..., "track", ...)` and `Main.rip()` pipeline, preserving normal metadata, paths, retries, tagging, database, and TIDAL container normalization.
+- The comparison table is shown before opt-in download begins.
+- `streamrip/comparison.py::download_selected()` rejects empty reports and queues only the highest-fidelity candidate.
+- Tests prove only the winner is queued and the no-candidate case cannot start a download.
+- Real `rip compare --help` shows the opt-in flag and exits without configuration migration.
+- Validation: Ruff clean; full suite `139 passed, 7 skipped, 1` pre-existing warning. No real service login or media download was performed.
 
 ## Safety and decision constraints
 
@@ -156,8 +167,8 @@ Commands:
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`. Current uncommitted files are:
+The multi-source foundation is committed in `254c33c` and migration safety in `83a5f99`. Current uncommitted files are:
 
-- Modified: `streamrip/config.py`, `streamrip/rip/cli.py`, `tests/test_compare_cli.py`, `tests/test_config.py`, and this `PROJECT_CONTEXT.md` heartbeat update.
+- Modified: `streamrip/comparison.py`, `streamrip/rip/cli.py`, `tests/test_comparison.py`, `tests/test_compare_cli.py`, and this `PROJECT_CONTEXT.md` update.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.

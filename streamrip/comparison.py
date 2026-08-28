@@ -136,3 +136,18 @@ def format_quality(quality) -> str:
     if quality.spatial:
         parts.append("spatial")
     return " / ".join(parts)
+
+
+async def download_selected(main, report: ComparisonReport) -> ServiceCandidate:
+    """Queue and download only the report's highest-fidelity track."""
+
+    selected = report.selected
+    if selected is None:
+        raise ValueError("No playable candidate is available to download")
+    await main.add_by_id(
+        selected.identity.source,
+        "track",
+        selected.identity.source_id,
+    )
+    await main.rip()
+    return selected

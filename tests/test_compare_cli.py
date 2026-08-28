@@ -6,7 +6,8 @@ from streamrip.rip.cli import _is_help_invocation, rip
 def test_compare_command_is_registered_with_safe_preview_help():
     command = rip.commands["compare"]
     assert command is not None
-    assert "without downloading audio" in command.help
+    assert "downloading is opt-in" in command.help
+    assert "download_best" in [parameter.name for parameter in command.params]
     assert [parameter.name for parameter in command.params][-2:] == ["source", "track_id"]
 
 

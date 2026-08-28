@@ -2,7 +2,12 @@ import asyncio
 
 import pytest
 
-from streamrip.comparison import MultiSourceComparator, format_quality, search_items
+from streamrip.comparison import (
+    MultiSourceComparator,
+    download_selected,
+    format_quality,
+    search_items,
+)
 from streamrip.multisource import (
     AudioQuality,
     ServiceCandidate,
@@ -168,3 +173,43 @@ async def test_conflicting_isrc_is_rejected_before_stream_inspection():
 
     assert report.candidates == []
     assert report.selected is None
+
+
+@pytest.mark.asyncio
+async def test_download_selected_queues_only_the_winner():
+    class FakeMain:
+        def __init__(self):
+            self.queued = []
+            self.rip_calls = 0
+
+        async def add_by_id(self, source, media_type, source_id):
+            self.queued.append((source, media_type, source_id))
+
+        async def rip(self):
+            self.rip_calls += 1
+
+    report = await MultiSourceComparator(
+        {
+            "tidal": FakeClient("tidal", candidate("tidal", "t1", 24, 96000)),
+            "qobuz": FakeClient(
+                "qobuz",
+                candidate("qobuz", "q1", 24, 192000),
+                [search_page("qobuz", "q1")],
+            ),
+        }
+    ).compare(REFERENCE)
+    main = FakeMain()
+
+    selected = await download_selected(main, report)
+
+    assert selected.identity.source == "qobuz"
+    assert main.queued == [("qobuz", "track", "q1")]
+    assert main.rip_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_download_selected_rejects_empty_report():
+    report = await MultiSourceComparator({}).compare(REFERENCE)
+
+    with pytest.raises(ValueError, match="No playable candidate"):
+        await download_selected(object(), report)
