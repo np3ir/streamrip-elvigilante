@@ -144,9 +144,8 @@ Commands:
 
 ## Next work
 
-1. Commit the verified TIDAL request-budget and forced-refresh work separately.
-2. Add a bounded run-wide 429 circuit breaker so sustained throttling stops safely instead of multiplying retries.
-3. Review and remove the `Main` constructor's hard-coded AppData config override, which can ignore an explicit `--config-path`.
+1. Add a bounded run-wide 429 circuit breaker so sustained throttling stops safely instead of multiplying retries.
+2. Review and remove the `Main` constructor's hard-coded AppData config override, which can ignore an explicit `--config-path`.
 
 ## Committed opt-in best-source download
 
@@ -160,7 +159,9 @@ Committed as `16d01df feat: download best matching source` (local only; not push
 - Real `rip compare --help` shows the opt-in flag and exits without configuration migration.
 - Validation: Ruff clean; full suite `139 passed, 7 skipped, 1` pre-existing warning. No real service login or media download was performed.
 
-## Current uncommitted TIDAL request safety and token refresh
+## Committed TIDAL request safety and token refresh
+
+Committed as `90ac62a fix: harden tidal request pacing and refresh` (local only; not pushed).
 
 - New `streamrip/client/request_budget.py::SharedRequestBudget` provides an async fixed-interval request budget with one lock, no initial wait, injected clock/sleeper/jitter for deterministic tests, and a count of admitted real API requests.
 - `TidalClient` accepts an optional shared budget and otherwise creates one per client/run from the effective `requests_per_minute` setting. All `_api_request` attempts, including retries, consume one budget slot.
@@ -180,6 +181,6 @@ Committed as `16d01df feat: download best matching source` (local only; not push
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, and opt-in best-source download in `16d01df`. Current uncommitted files are `streamrip/client/tidal.py`, new `streamrip/client/request_budget.py`, new `tests/test_request_budget.py`, new `tests/test_tidal_auth.py`, and this memory update.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, and TIDAL request/refresh safety in `90ac62a`. The product working tree was clean before this memory correction; only `PROJECT_CONTEXT.md` is modified.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
