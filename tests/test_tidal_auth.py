@@ -7,7 +7,7 @@ import pytest
 
 from streamrip.client.request_budget import RateLimitGuard
 from streamrip.client.tidal import TidalClient
-from streamrip.exceptions import TidalRateLimitError
+from streamrip.exceptions import AuthenticationError, TidalRateLimitError
 
 
 class FakeResponse:
@@ -31,9 +31,11 @@ class FakeSession:
     def __init__(self):
         self.headers = {}
         self.post_calls = 0
+        self.post_kwargs = None
 
     def post(self, *_args, **_kwargs):
         self.post_calls += 1
+        self.post_kwargs = _kwargs
         return ResponseContext()
 
 
@@ -93,6 +95,9 @@ async def test_forced_refresh_ignores_future_expiry_after_401():
     assert client.config.access_token == "new-token"
     assert client.refresh_token == "new-refresh"
     assert client.session.headers["authorization"] == "Bearer new-token"
+    assert client.session.post_kwargs["data"]["client_id"]
+    assert client.session.post_kwargs["data"]["client_secret"]
+    assert "headers" not in client.session.post_kwargs
 
 
 @pytest.mark.asyncio
@@ -132,3 +137,64 @@ async def test_429_that_reaches_limit_trips_before_retrying():
 
     assert client.session.get_calls == 1
     assert client.rate_limit_guard.tripped is True
+
+
+@pytest.mark.asyncio
+async def test_device_authorization_returns_code_and_uri():
+    client = object.__new__(TidalClient)
+
+    async def post(_url, _data, _auth=None):
+        return {
+            "deviceCode": "device-code",
+            "verificationUriComplete": "link.tidal.com/ABC",
+        }
+
+    client._api_post = post
+
+    assert await client._get_device_code() == (
+        "device-code",
+        "link.tidal.com/ABC",
+    )
+
+
+@pytest.mark.asyncio
+async def test_device_authorization_pending_and_success():
+    client = object.__new__(TidalClient)
+    responses = [
+        {"status": 400, "sub_status": 1002},
+        {
+            "access_token": "access",
+            "refresh_token": "refresh",
+            "expires_in": 3600,
+            "user": {"userId": 7, "countryCode": "US"},
+        },
+    ]
+
+    async def post(_url, _data, _auth=None):
+        return responses.pop(0)
+
+    client._api_post = post
+
+    assert await client._get_auth_status("code") == (2, {})
+    status, info = await client._get_auth_status("code")
+    assert status == 0
+    assert info["user_id"] == 7
+    assert info["country_code"] == "US"
+
+
+@pytest.mark.asyncio
+async def test_invalid_oauth_client_requests_reauthorization():
+    client = tidal_client()
+
+    class InvalidClientResponse(FakeResponse):
+        async def json(self):
+            return {"status": 401, "error": "invalid_client"}
+
+    class InvalidClientContext(ResponseContext):
+        async def __aenter__(self):
+            return InvalidClientResponse()
+
+    client.session.post = Mock(return_value=InvalidClientContext())
+
+    with pytest.raises(AuthenticationError, match="authorized again"):
+        await client._refresh_access_token(force=True)

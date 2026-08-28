@@ -130,6 +130,9 @@ class TidalPrompter(CredentialPrompter):
         c.token_expiry = info["token_expiry"]  # type: ignore
 
         self.client._update_authorization_from_config()
+        self.client.refresh_token = c.refresh_token
+        self.client.token_expiry = float(c.token_expiry)
+        self.client._persist_token()
         self.client.logged_in = True
         self.save()
 

@@ -9,6 +9,7 @@ from .. import db
 from ..client import Client, DeezerClient, QobuzClient, SoundcloudClient, TidalClient
 from ..config import Config
 from ..console import console
+from ..exceptions import AuthenticationError, MissingCredentialsError
 from ..media import (
     PendingAlbum,
     PendingArtist,
@@ -216,17 +217,25 @@ class Main:
             finally:
                 self.queue.task_done()
 
-    async def get_logged_in_client(self, source: str):
+    async def get_logged_in_client(self, source: str, *, prompt_on_missing: bool = True):
         client = self.clients.get(source)
         if client is None:
             raise Exception(f"No client named {source}")
         if not client.logged_in:
             prompter = get_prompter(client, self.config)
             if not prompter.has_creds():
+                if not prompt_on_missing:
+                    raise MissingCredentialsError(f"{source} credentials are not configured")
                 await prompter.prompt_and_login()
                 prompter.save()
             else:
-                await client.login()
+                try:
+                    await client.login()
+                except AuthenticationError:
+                    if not prompt_on_missing:
+                        raise
+                    await prompter.prompt_and_login()
+                    prompter.save()
         return client
 
     async def __aenter__(self):

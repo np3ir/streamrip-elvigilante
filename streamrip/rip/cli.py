@@ -452,7 +452,9 @@ async def compare_sources(ctx, download_best, services, source, track_id):
                 if service == source:
                     continue
                 try:
-                    active_clients[service] = await main.get_logged_in_client(service)
+                    active_clients[service] = await main.get_logged_in_client(
+                        service, prompt_on_missing=False
+                    )
                 except Exception as error:
                     login_errors[service] = f"{type(error).__name__}: {error}"
 

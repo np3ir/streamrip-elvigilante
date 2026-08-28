@@ -12,7 +12,7 @@ import click
 from aiohttp import ClientSession, ClientTimeout, CookieJar, TCPConnector
 
 from ..config import Config
-from ..exceptions import NonStreamableError, TidalRateLimitError
+from ..exceptions import AuthenticationError, NonStreamableError, TidalRateLimitError
 from .client import Client
 from .downloadable import TidalDownloadable, TidalVideoDownloadable
 from .request_budget import RateLimitGuard, SharedRequestBudget
@@ -29,7 +29,7 @@ AUTH_URL = "https://auth.tidal.com/v1/oauth2"
 #   export TIDAL_CLIENT_ID=your_id
 #   export TIDAL_CLIENT_SECRET=your_secret
 # If not set, bundled defaults are used (same approach as tiddl).
-_BUNDLED_B64 = "NE4zbjZRMXg5NUxMNUs3cDtvS09YZkpXMzcxY1g2eGFaMFB5aGdHTkJkTkxsQlpkNEFLS1lvdWdNamlrPQ=="
+_BUNDLED_B64 = "ZlgySnhkbW50WldLMGl4VDsxTm45QWZEQWp4cmdKRkpiS05XTGVBeUtHVkdtSU51WFBQTEhWWEF2eEFnPQ=="
 
 
 def _get_client_credentials() -> tuple[str, str]:
@@ -54,8 +54,6 @@ def _get_client_credentials() -> tuple[str, str]:
 
 
 CLIENT_ID, CLIENT_SECRET = _get_client_credentials()
-AUTHORIZATION = aiohttp.encode_basic_auth(CLIENT_ID, CLIENT_SECRET)
-
 STREAM_URL_REGEX = re.compile(
     r"#EXT-X-STREAM-INF:BANDWIDTH=\d+,AVERAGE-BANDWIDTH=\d+,CODECS=\"(?!jpeg)[^\"]+\",RESOLUTION=\d+x\d+\n(.+)"
 )
@@ -443,18 +441,28 @@ class TidalClient(Client):
             ):
                 return
             logger.info("Refreshing Tidal token...")
-            data = {"client_id": CLIENT_ID, "refresh_token": self.refresh_token, "grant_type": "refresh_token", "scope": "r_usr+w_usr+w_sub"}
+            data = {
+                "client_id": CLIENT_ID,
+                "client_secret": CLIENT_SECRET,
+                "refresh_token": self.refresh_token,
+                "grant_type": "refresh_token",
+                "scope": "r_usr+w_usr+w_sub",
+            }
             try:
                 # Do NOT use the semaphore here: if all connections are waiting for
                 # this refresh to complete, using the semaphore would deadlock.
                 async with self.session.post(
                     f"{AUTH_URL}/token",
                     data=data,
-                    headers={"Authorization": AUTHORIZATION},
                 ) as resp:
                     resp_data = await resp.json()
 
                 if resp_data.get("status", 200) != 200:
+                    if resp_data.get("error") == "invalid_client":
+                        raise AuthenticationError(
+                            "The saved TIDAL session uses an unavailable OAuth "
+                            "client and must be authorized again"
+                        )
                     raise Exception(f"Refresh failed: {resp_data}")
 
                 c = self.config
@@ -469,6 +477,49 @@ class TidalClient(Client):
             except Exception as e:
                 logger.error(f"Refresh failed: {e}")
                 raise e
+
+    async def _get_device_code(self) -> tuple[str, str]:
+        """Start TIDAL device authorization and return code plus login URI."""
+
+        response = await self._api_post(
+            f"{AUTH_URL}/device_authorization",
+            {"client_id": CLIENT_ID, "scope": "r_usr+w_usr+w_sub"},
+        )
+        if response.get("status", 200) != 200:
+            raise AuthenticationError("TIDAL device authorization failed")
+        return response["deviceCode"], response["verificationUriComplete"]
+
+    async def _get_auth_status(
+        self, device_code: str
+    ) -> tuple[int, dict[str, int | str]]:
+        """Poll TIDAL device authorization: 0 success, 2 pending, 1 failed."""
+
+        response = await self._api_post(
+            f"{AUTH_URL}/token",
+            {
+                "client_id": CLIENT_ID,
+                "client_secret": CLIENT_SECRET,
+                "device_code": device_code,
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "scope": "r_usr+w_usr+w_sub",
+            },
+        )
+        if response.get("status", 200) != 200:
+            pending = response.get("error") == "authorization_pending" or (
+                response.get("status") == 400 and response.get("sub_status") == 1002
+            )
+            return (2 if pending else 1), {}
+
+        user = response.get("user") or {}
+        return 0, {
+            "user_id": user.get("userId", response.get("user_id", "")),
+            "country_code": user.get(
+                "countryCode", response.get("country_code", "")
+            ),
+            "access_token": response["access_token"],
+            "refresh_token": response.get("refresh_token", ""),
+            "token_expiry": response["expires_in"] + time.time(),
+        }
 
     async def get_lyrics(self, track_id: str) -> str | None:
         """Fetch timed lyrics for a track and return them in LRC format.

@@ -1,7 +1,10 @@
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 from streamrip.config import Config
 from streamrip.db import Dummy
+from streamrip.exceptions import MissingCredentialsError
 from streamrip.rip.main import Main
 
 
@@ -62,3 +65,20 @@ def test_main_honors_disabled_databases(tmp_path):
     assert isinstance(main.database.downloads, Dummy)
     assert isinstance(main.database.failed, Dummy)
     assert isinstance(main.database.isrcs, Dummy)
+
+
+@pytest.mark.asyncio
+async def test_noninteractive_login_does_not_prompt_for_missing_credentials():
+    main = object.__new__(Main)
+    client = Mock(logged_in=False)
+    main.clients = {"deezer": client}
+    main.config = Mock()
+    prompter = Mock()
+    prompter.has_creds.return_value = False
+    prompter.prompt_and_login = AsyncMock()
+
+    with patch("streamrip.rip.main.get_prompter", return_value=prompter):
+        with pytest.raises(MissingCredentialsError, match="deezer"):
+            await main.get_logged_in_client("deezer", prompt_on_missing=False)
+
+    prompter.prompt_and_login.assert_not_awaited()
