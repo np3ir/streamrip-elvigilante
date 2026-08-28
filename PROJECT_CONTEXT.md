@@ -127,12 +127,12 @@ Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 ## Validation baseline
 
-Latest full run after the opt-in best-source changes:
+Latest full run after ISRC-first cross-service discovery:
 
-- `155 passed`
+- `156 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - `0` runtime warnings in the final suite summary
-- Ruff clean on all modified/new files
+- Ruff clean on all modified/new files. A separate whole-repository Ruff run reports one pre-existing `RUF036` ordering issue in `streamrip/media/semaphore.py:10`; it is unrelated to the current comparison change.
 - `git diff --check` clean except informational LF-to-CRLF warnings on Windows
 
 Commands:
@@ -241,6 +241,16 @@ Committed as `97a2c2d fix: resolve tidal single album metadata` (local only; not
 - New regression test proves a bogus 1970 track start date cannot override the full album's 2026 release date.
 - Validation: Ruff clean; full suite `155 passed, 7 skipped`.
 
+## ISRC-first cross-service discovery
+
+Current uncommitted implementation in `streamrip/comparison.py` and `tests/test_comparison.py`:
+
+- Secondary-service discovery now searches the exact reference ISRC first, then falls back to `artist + title` metadata search.
+- Results returned by both queries are de-duplicated by service track ID before any stream manifest/file-URL inspection, preventing repeated quality-resolution requests.
+- Candidate ordering continues to prefer an exact ISRC match over metadata fallback and re-verifies identity after full candidate resolution.
+- Controlled live preview `rip compare tidal 524417109` completed without downloading audio. TIDAL remained the winner at FLAC/lossless/24-bit/44.1 kHz; Qobuz returned no equivalent result even with ISRC-first discovery, and Deezer remained unavailable because no valid authentication was configured. No credential prompt appeared.
+- Validation: comparison tests `9 passed`; full suite `156 passed, 7 skipped`; Ruff clean on the two changed files.
+
 ## Safety and decision constraints
 
 - Never store access tokens, ARLs, app secrets, or private configuration in this file or tests.
@@ -251,6 +261,6 @@ Committed as `97a2c2d fix: resolve tidal single album metadata` (local only; not
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, and TIDAL single metadata correction in `97a2c2d`. Only this memory update is modified.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, and TIDAL single metadata correction in `97a2c2d`. The ISRC-first comparison implementation, its tests, and this memory update are currently modified but not yet committed.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
