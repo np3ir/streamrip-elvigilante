@@ -1,0 +1,176 @@
+# Streamrip ElVigilante — AI handoff context
+
+Last updated: 2026-08-28 (America/La_Paz)
+
+## Objective
+
+Evolve `streamrip-elvigilante` 2.2.8 into a robust multi-source downloader:
+
+1. Make its TIDAL authentication, quality cascade, download pipeline, and file construction as reliable and efficient as (or better than) sibling project `../tiddl-elvigilante`.
+2. Preserve Deezer and Qobuz compatibility.
+3. Match equivalent recordings across TIDAL, Qobuz, and Deezer.
+4. Compare actual available audio properties and download the highest-fidelity candidate.
+
+Default fidelity policy agreed during implementation: lossless stereo FLAC outranks lossy spatial/Atmos. Among lossless candidates, prefer bit depth, then sample rate, then bitrate. ISRC is the strong recording identity; title + artist + duration (3-second tolerance) is a conservative fallback when ISRC is absent.
+
+## Environment
+
+- Repository: `G:\My Drive\Backups\zhome-2026-07-25\Streamrip`
+- Branch: `codex/multisource-comparison`, created from `main` at `28f634a`
+- Base version: `2.2.8`
+- Development Python: 3.13
+- Isolated development environment: `%LOCALAPPDATA%\streamrip-elvigilante-venv`
+- Global `rip 2.1.0` under Python 3.13 must remain untouched until explicitly authorized.
+- Repository lives in Google Drive. Do not put virtual environments inside it; creating many small files is extremely slow.
+- Sibling reference implementation: `..\tiddl-elvigilante` 1.5.4. Read its `AGENTS.md` before changing anything in that sibling repository. It is a reference only; do not modify/release it without explicit authorization.
+
+## Current uncommitted implementation
+
+### Multi-source foundation
+
+New `streamrip/multisource.py`:
+
+- `TrackIdentity`, `AudioQuality`, and `ServiceCandidate` service-neutral models.
+- `match_tracks()` uses exact normalized ISRC first. Conflicting populated ISRCs never fall back to fuzzy metadata.
+- Metadata fallback normalizes Unicode/accent/punctuation and requires title, artist, and duration within three seconds.
+- `choose_best()` implements the fidelity-first policy.
+- `normalize_sample_rate()` normalizes service values expressed in kHz or Hz.
+
+Tests: `tests/test_multisource.py`.
+
+### TIDAL manifest and quality work
+
+New `streamrip/client/tidal_manifest.py`:
+
+- Parses base64 BTS/JSON manifests and DASH/XML manifests.
+- Extracts ordered media segment URLs.
+- Captures codec, MIME type, encryption information, restrictions, and actual audio properties.
+- Correctly treats E-AC-3 Atmos as lossy/spatial and FLAC/ALAC as lossless.
+
+Changes in `streamrip/client/tidal.py`:
+
+- `HI_RES_LOSSLESS` is quality level 4; `TidalClient.max_quality = 4`.
+- A single de-duplicated cascade replaces separate FLAC and AAC request loops.
+- A downgraded AAC response does not stop the cascade while a lossless tier remains to try.
+- The best lossy response is retained as a final fallback.
+- Removed `_flac_downloaded`, which marked a track before its bytes were successfully written.
+
+Changes in `streamrip/client/downloadable.py`:
+
+- `TidalDownloadable` can carry actual normalized quality.
+- Supports one URL or multiple ordered DASH segment URLs.
+- Segment transfer is batched (8 at a time), bounded in memory, written to `.part`, and atomically renamed.
+
+Changes in TIDAL metadata adapters:
+
+- `streamrip/metadata/track.py` and `streamrip/metadata/album.py` recognize `HI_RES_LOSSLESS`.
+- Prefer delivered `bitDepth` and `sampleRate`; use estimates only when omitted.
+
+Tests: `tests/test_tidal_manifest.py` and `tests/test_tidal_quality.py`.
+
+### TIDAL file construction and container normalization
+
+New `streamrip/audio_container.py` and integration in `streamrip/media/track.py`:
+
+- Detects ISO Base Media/MP4 from the `ftyp` bytes rather than trusting the filename or requested quality.
+- For a delivered lossless TIDAL stream inside MP4, invokes FFmpeg with stream copy (`-c:a copy`), so audio is not transcoded.
+- Writes extraction output to a same-directory temporary file, validates non-empty output, and atomically replaces the destination.
+- Keeps the original source on extraction failure and cleans extraction temporaries.
+- Runs blocking FFmpeg through `asyncio.to_thread(subprocess.run)`; this works with both Selector and Proactor event loops on Windows.
+- TIDAL segmented transfers use bounded batches, preserve manifest order even when HTTP responses complete out of order, publish via `.part` + atomic rename, and remove partials after an HTTP failure.
+
+Tests: `tests/test_audio_container.py` and `tests/test_tidal_segment_download.py`. The tests use generated temporary audio and a loopback aiohttp server; they do not contact a music service or the user's library.
+
+### Service candidate adapters and concurrent comparison
+
+New `streamrip/client/candidate.py` and `Client.get_candidate()`:
+
+- Convert raw TIDAL, Qobuz, and Deezer track metadata into the common `TrackIdentity` model.
+- Resolve a stream URL/manifest without transferring media and normalize the quality actually available.
+- Qobuz uses technical fields from `track/getFileUrl`; unknown Hi-Res details are not invented.
+- Deezer maps the selected tier to FLAC 16/44.1, MP3 320, or MP3 128.
+- TIDAL uses the delivered manifest profile.
+
+New `streamrip/comparison.py`:
+
+- Searches TIDAL, Qobuz, and Deezer concurrently.
+- Prefers exact ISRC and verifies matches again after fetching full metadata.
+- Rejects conflicting populated ISRCs before stream inspection.
+- Isolates failures per service and returns candidates, selected source, and errors.
+
+Tests: `tests/test_service_candidates.py` and `tests/test_comparison.py`.
+
+### CLI comparison preview
+
+New command: `rip compare SOURCE TRACK_ID`, optionally repeating `--service` to limit compared services.
+
+- Logs into only the requested/reference services.
+- Reuses the inspected reference candidate instead of requesting its manifest twice.
+- Displays service, match type, normalized quality, winner, and isolated service errors.
+- It is preview-only and never transfers media.
+
+Important observed side effect: invoking the real `rip compare --help` on 2026-08-27 triggered Streamrip's pre-existing group-level config migration and updated `%APPDATA%\streamrip\config.toml` from schema 2.0.6 to 2.2.0. No backup file was created by the existing updater. No credentials or media were changed. Do not revert or further alter the user's config without explicit authorization. Future help tests should inspect the Click command object or use a temporary `--config-path`.
+
+## Validation baseline
+
+Latest full run after the changes:
+
+- `134 passed`
+- `7 skipped` (credentials/integration tests unavailable)
+- `1` pre-existing warning from an AsyncMock in `test_latest_streamrip_version_creates_session`
+- Ruff clean on all modified/new files
+- `git diff --check` clean except informational LF-to-CRLF warnings on Windows
+
+Commands:
+
+```powershell
+& "$env:LOCALAPPDATA\streamrip-elvigilante-venv\Scripts\python.exe" -m pytest
+& "$env:LOCALAPPDATA\streamrip-elvigilante-venv\Scripts\ruff.exe" check <changed files>
+```
+
+## Next work
+
+1. Complete the checkpoint commit after setting repository-local Git identity to the existing project author (`djelvigilante`, email already present in repository history). The first commit attempt was blocked because no Git author identity was configured; do not set global Git identity.
+2. Prevent group-level config migration for help-only CLI invocations and make real migrations create a backup.
+3. Add opt-in automatic best-source download and end-to-end tests.
+4. Port tiddl's shared request budget / rate-limit safety and strengthen token refresh after the comparison path is stable.
+
+## Safety and decision constraints
+
+- Never store access tokens, ARLs, app secrets, or private configuration in this file or tests.
+- Do not download real media into the user's music library during tests; use temporary directories/local servers.
+- Do not update the global `rip 2.1.0`, publish, push, merge, tag, or create a release without explicit authorization.
+- Preserve existing Deezer and Qobuz behavior; changes require regression tests.
+- Treat advertised quality as a hint. Selection must ultimately rely on the delivered manifest/file properties.
+
+## Working tree expected at this handoff
+
+Modified:
+
+- `streamrip/client/client.py`
+- `streamrip/client/downloadable.py`
+- `streamrip/client/qobuz.py`
+- `streamrip/client/tidal.py`
+- `streamrip/media/track.py`
+- `streamrip/metadata/album.py`
+- `streamrip/metadata/track.py`
+- `streamrip/rip/cli.py`
+
+New:
+
+- `PROJECT_CONTEXT.md`
+- `streamrip/audio_container.py`
+- `streamrip/client/candidate.py`
+- `streamrip/client/tidal_manifest.py`
+- `streamrip/comparison.py`
+- `streamrip/multisource.py`
+- `tests/test_comparison.py`
+- `tests/test_multisource.py`
+- `tests/test_service_candidates.py`
+- `tests/test_audio_container.py`
+- `tests/test_compare_cli.py`
+- `tests/test_tidal_manifest.py`
+- `tests/test_tidal_quality.py`
+- `tests/test_tidal_segment_download.py`
+
+These changes are staged but uncommitted. A checkpoint commit was attempted after creating `codex/multisource-comparison`, but Git rejected it because author identity was not configured. The latest commit remains `28f634a`; no push occurred.

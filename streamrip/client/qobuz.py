@@ -334,8 +334,26 @@ class QobuzClient(Client):
                 )
             raise NonStreamableError
 
+        from ..multisource import AudioQuality, normalize_sample_rate
+
+        lossless = quality > 1
+        technical_quality = AudioQuality(
+            codec="flac" if lossless else "mp3",
+            lossless=lossless,
+            bit_depth=(resp_json.get("bit_depth") or (16 if quality == 2 else None)),
+            sample_rate_hz=(
+                normalize_sample_rate(resp_json.get("sampling_rate"))
+                or (44100 if quality == 2 else None)
+            ),
+            bitrate_kbps=resp_json.get("bitrate"),
+            channels=resp_json.get("number_of_channels") or 2,
+        )
         return BasicDownloadable(
-            self.session, stream_url, "flac" if quality > 1 else "mp3", source="qobuz"
+            self.session,
+            stream_url,
+            "flac" if lossless else "mp3",
+            source="qobuz",
+            quality=technical_quality,
         )
 
     async def _paginate(

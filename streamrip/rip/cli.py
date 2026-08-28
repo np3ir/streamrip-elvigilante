@@ -388,6 +388,92 @@ async def search(ctx, first, output_file, num_results, source, media_type, query
             await main.rip()
 
 
+@rip.command("compare")
+@click.option(
+    "--service",
+    "services",
+    multiple=True,
+    type=click.Choice(["tidal", "qobuz", "deezer"], case_sensitive=False),
+    help="Service to compare; repeat the option. Defaults to all three.",
+)
+@click.argument(
+    "source",
+    type=click.Choice(["tidal", "qobuz", "deezer"], case_sensitive=False),
+)
+@click.argument("track-id")
+@click.pass_context
+@coro
+async def compare_sources(ctx, services, source, track_id):
+    """Preview the best source for a reference track without downloading audio."""
+
+    from rich.table import Table
+
+    from ..comparison import MultiSourceComparator, format_quality
+    from ..multisource import match_tracks
+
+    if ctx.obj["config"] is None:
+        return
+
+    configured = tuple(dict.fromkeys(services or ("tidal", "qobuz", "deezer")))
+    if source not in configured:
+        configured = (source, *configured)
+
+    with ctx.obj["config"] as cfg:
+        async with Main(cfg) as main:
+            reference_client = await main.get_logged_in_client(source)
+            reference_quality = cfg.session.get_source(source).quality
+            reference_candidate = await reference_client.get_candidate(
+                track_id, reference_quality
+            )
+
+            active_clients = {source: reference_client}
+            login_errors = {}
+            for service in configured:
+                if service == source:
+                    continue
+                try:
+                    active_clients[service] = await main.get_logged_in_client(service)
+                except Exception as error:
+                    login_errors[service] = f"{type(error).__name__}: {error}"
+
+            qualities = {
+                service: cfg.session.get_source(service).quality
+                for service in active_clients
+            }
+            report = await MultiSourceComparator(active_clients).compare(
+                reference_candidate.identity,
+                qualities,
+                reference_candidate=reference_candidate,
+            )
+            report.errors.update(login_errors)
+
+    table = Table(title="Cross-service audio comparison")
+    table.add_column("Service")
+    table.add_column("Match")
+    table.add_column("Available quality")
+    table.add_column("Selected")
+    for candidate in report.candidates:
+        match = match_tracks(report.reference, candidate.identity).value.upper()
+        table.add_row(
+            candidate.identity.source,
+            match,
+            format_quality(candidate.quality),
+            "✓" if candidate is report.selected else "",
+        )
+    console.print(table)
+
+    if report.selected is None:
+        console.print("[yellow]No equivalent playable recording was found.[/yellow]")
+    else:
+        selected = report.selected
+        console.print(
+            f"[green]Best source:[/green] {selected.identity.source} "
+            f"({format_quality(selected.quality)})"
+        )
+    for service, error in report.errors.items():
+        console.print(f"[yellow]{service} unavailable:[/yellow] {error}")
+
+
 @rip.command()
 @click.option("-s", "--source", help="The source to search tracks on.")
 @click.option(

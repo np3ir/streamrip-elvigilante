@@ -1,0 +1,170 @@
+import asyncio
+
+import pytest
+
+from streamrip.comparison import MultiSourceComparator, format_quality, search_items
+from streamrip.multisource import (
+    AudioQuality,
+    ServiceCandidate,
+    TrackIdentity,
+)
+
+REFERENCE = TrackIdentity(
+    source="tidal",
+    source_id="t1",
+    title="Song",
+    artist="Artist",
+    duration_seconds=180,
+    isrc="USABC1234567",
+)
+
+
+def candidate(source, source_id, bit_depth, sample_rate):
+    return ServiceCandidate(
+        TrackIdentity(
+            source=source,
+            source_id=source_id,
+            title="Song",
+            artist="Artist",
+            duration_seconds=180,
+            isrc="USABC1234567",
+        ),
+        AudioQuality(
+            codec="flac",
+            lossless=True,
+            bit_depth=bit_depth,
+            sample_rate_hz=sample_rate,
+        ),
+    )
+
+
+class FakeClient:
+    def __init__(self, source, result, pages=None, error=None, delay=0):
+        self.source = source
+        self.max_quality = 4
+        self.result = result
+        self.pages = pages or []
+        self.error = error
+        self.delay = delay
+
+    async def search(self, media_type, query, limit):
+        assert media_type == "track"
+        assert "Artist" in query and "Song" in query
+        assert limit == 10
+        await asyncio.sleep(self.delay)
+        if self.error:
+            raise self.error
+        return self.pages
+
+    async def get_candidate(self, source_id, quality):
+        assert source_id == self.result.identity.source_id
+        assert quality == 4
+        await asyncio.sleep(self.delay)
+        return self.result
+
+
+def search_page(source, source_id, isrc="USABC1234567"):
+    item = {
+        "id": source_id,
+        "title": "Song",
+        "duration": 180,
+        "isrc": isrc,
+        "artist": {"name": "Artist"},
+        "performer": {"name": "Artist"},
+    }
+    if source == "qobuz":
+        return {"tracks": {"items": [item]}}
+    if source == "deezer":
+        return {"data": [item]}
+    return {"items": [item]}
+
+
+def test_flattens_service_search_pages():
+    assert len(search_items("qobuz", [search_page("qobuz", "q1")])) == 1
+    assert len(search_items("deezer", [search_page("deezer", "d1")])) == 1
+    assert len(search_items("tidal", [search_page("tidal", "t1")])) == 1
+
+
+def test_formats_normalized_quality_for_cli():
+    text = format_quality(
+        AudioQuality(
+            codec="flac",
+            lossless=True,
+            bit_depth=24,
+            sample_rate_hz=192000,
+            channels=2,
+        )
+    )
+    assert text == "FLAC / lossless / 24-bit / 192 kHz / 2 ch"
+
+
+@pytest.mark.asyncio
+async def test_compares_concurrently_and_selects_highest_fidelity():
+    clients = {
+        "tidal": FakeClient("tidal", candidate("tidal", "t1", 24, 96000), delay=0.03),
+        "qobuz": FakeClient(
+            "qobuz",
+            candidate("qobuz", "q1", 24, 192000),
+            [search_page("qobuz", "q1")],
+            delay=0.03,
+        ),
+        "deezer": FakeClient(
+            "deezer",
+            candidate("deezer", "d1", 16, 44100),
+            [search_page("deezer", "d1")],
+            delay=0.03,
+        ),
+    }
+
+    report = await MultiSourceComparator(clients).compare(REFERENCE)
+
+    assert {item.identity.source for item in report.candidates} == {
+        "tidal",
+        "qobuz",
+        "deezer",
+    }
+    assert report.selected.identity.source == "qobuz"
+    assert report.errors == {}
+
+
+@pytest.mark.asyncio
+async def test_reference_candidate_prevents_duplicate_manifest_request():
+    tidal = FakeClient("tidal", candidate("tidal", "t1", 24, 96000))
+    seed = tidal.result
+
+    report = await MultiSourceComparator({"tidal": tidal}).compare(
+        REFERENCE, reference_candidate=seed
+    )
+
+    assert report.candidates == [seed]
+
+
+@pytest.mark.asyncio
+async def test_one_service_failure_does_not_cancel_other_services():
+    clients = {
+        "tidal": FakeClient("tidal", candidate("tidal", "t1", 24, 96000)),
+        "qobuz": FakeClient(
+            "qobuz",
+            candidate("qobuz", "q1", 24, 192000),
+            error=RuntimeError("login failed"),
+        ),
+    }
+
+    report = await MultiSourceComparator(clients).compare(REFERENCE)
+
+    assert report.selected.identity.source == "tidal"
+    assert "login failed" in report.errors["qobuz"]
+
+
+@pytest.mark.asyncio
+async def test_conflicting_isrc_is_rejected_before_stream_inspection():
+    qobuz = FakeClient(
+        "qobuz",
+        candidate("qobuz", "q1", 24, 192000),
+        [search_page("qobuz", "q1", isrc="DIFFERENT")],
+    )
+
+    report = await MultiSourceComparator({"qobuz": qobuz}).compare(REFERENCE)
+
+    assert report.candidates == []
+    assert report.selected is None

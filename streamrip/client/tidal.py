@@ -15,6 +15,7 @@ from ..config import Config
 from ..exceptions import NonStreamableError
 from .client import Client
 from .downloadable import TidalDownloadable, TidalVideoDownloadable
+from .tidal_manifest import parse_tidal_manifest
 
 logger = logging.getLogger("streamrip")
 
@@ -59,10 +60,14 @@ STREAM_URL_REGEX = re.compile(
 )
 
 QUALITY_MAP = {
-    0: "LOW", 1: "HIGH", 2: "LOSSLESS", 3: "HI_RES", 4: "HI_RES_LOSSLESS",
+    0: "LOW",
+    1: "HIGH",
+    2: "LOSSLESS",
+    3: "HI_RES",
+    4: "HI_RES_LOSSLESS",
 }
 
-QUALITY_PRIORITY = [3, 2, 1, 0]
+QUALITY_PRIORITY = [4, 3, 2, 1, 0]
 
 # Dedicated token file — separate from config.toml, with restricted permissions
 _TOKEN_FILE = os.path.join(click.get_app_dir("streamrip"), "tidal_token.json")
@@ -107,7 +112,7 @@ class TidalTokenStore:
 
 class TidalClient(Client):
     source = "tidal"
-    max_quality = 3
+    max_quality = 4
 
     def __init__(self, config: Config):
         self.logged_in = False
@@ -131,7 +136,6 @@ class TidalClient(Client):
         # --------------------------------------------
 
         self.auth_lock = asyncio.Lock()
-        self._flac_downloaded = set()
         self.token_store = TidalTokenStore()
 
     async def login(self):
@@ -317,16 +321,12 @@ class TidalClient(Client):
         if media_type == "video":
             return await self._get_video_downloadable(track_id, quality)
 
-        tid_str = str(track_id)
-        if tid_str in self._flac_downloaded:
-            raise NonStreamableError(f"Track {track_id} already downloaded")
-
         qualities = [q for q in QUALITY_PRIORITY if q <= quality]
         if not qualities: qualities = QUALITY_PRIORITY
-        
+
         last_err = None
-        
-        # Phase 1: Try FLAC
+        best_lossy = None
+
         for q in qualities:
             try:
                 q_val = QUALITY_MAP.get(q, "HIGH")
@@ -336,63 +336,29 @@ class TidalClient(Client):
                 except:
                     resp = await self._api_request(f"tracks/{track_id}/playbackinfopostpaywall", params, base=API_BASE)
 
-                if "manifest" in resp:
-                    manifest = json.loads(base64.b64decode(resp["manifest"]).decode("utf-8"))
-                else:
-                    manifest = resp
-                
-                url = manifest.get("urls", [])[0] if "urls" in manifest else ""
-                if not url: continue
-                
-                codec = manifest.get("codecs", "flac")
-                if not codec or not isinstance(codec, str): continue
-                
-                codecs_list = [c.strip().lower() for c in codec.split(",")]
-                if "flac" in codecs_list:
-                    enc = manifest.get("keyId")
-                    if manifest.get("encryptionType") == "NONE": enc = None
-                    self._flac_downloaded.add(tid_str)
-                    return TidalDownloadable(self.session, url=url, codec="flac", encryption_key=enc, restrictions=manifest.get("restrictions"))
-                
-            except NonStreamableError: raise
+                manifest = parse_tidal_manifest(resp)
+                downloadable = TidalDownloadable(
+                    self.session,
+                    url=None,
+                    codec=manifest.codec,
+                    encryption_key=manifest.encryption_key,
+                    restrictions=manifest.restrictions,
+                    urls=manifest.urls,
+                    quality=manifest.quality,
+                )
+                if manifest.quality.lossless:
+                    return downloadable
+                if best_lossy is None or manifest.quality.rank > best_lossy.quality.rank:
+                    best_lossy = downloadable
+            except NonStreamableError:
+                raise
             except Exception as e:
                 last_err = e
                 continue
-        
-        # Phase 2: Try M4A/AAC
-        for q in qualities:
-            try:
-                q_val = QUALITY_MAP.get(q, "HIGH")
-                params = {"audioquality": q_val, "playbackmode": "STREAM", "assetpresentation": "FULL", "prefetch": "false"}
-                try:
-                    resp = await self._api_request(f"tracks/{track_id}/playbackinfopostpaywall/v4", params, base=API_BASE)
-                except:
-                    resp = await self._api_request(f"tracks/{track_id}/playbackinfopostpaywall", params, base=API_BASE)
 
-                if "manifest" in resp:
-                    manifest = json.loads(base64.b64decode(resp["manifest"]).decode("utf-8"))
-                else:
-                    manifest = resp
-                
-                url = manifest.get("urls", [])[0] if "urls" in manifest else ""
-                if not url: continue
-                
-                codec = manifest.get("codecs", "flac")
-                if not codec or not isinstance(codec, str): continue
-                
-                codecs_list = [c.strip().lower() for c in codec.split(",")]
-                if "m4a" in codecs_list or "aac" in codecs_list:
-                    enc = manifest.get("keyId")
-                    if manifest.get("encryptionType") == "NONE": enc = None
-                    self._flac_downloaded.add(tid_str)
-                    return TidalDownloadable(self.session, url=url, codec="m4a", encryption_key=enc, restrictions=manifest.get("restrictions"))
-                
-            except NonStreamableError: raise
-            except Exception as e:
-                last_err = e
-                continue
-        
-        raise NonStreamableError(f"No FLAC or M4A available: {last_err}")
+        if best_lossy is not None:
+            return best_lossy
+        raise NonStreamableError(f"No playable TIDAL stream available: {last_err}")
 
     async def _get_video_downloadable(self, video_id: str, quality: int):
         q_map = {0: "LOW", 1: "MEDIUM", 2: "HIGH", 3: "HIGH"}

@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from ..filepath_utils import clean_filename, clean_filepath, get_alpha_bucket
+from ..multisource import normalize_sample_rate
 from .covers import Covers
 from .util import DEFAULT_ARTIST_SEPARATOR, get_quality_id, safe_get, typed
 
@@ -228,12 +229,22 @@ class AlbumMetadata:
         # Quality and Container
         tidal_quality = resp.get("audioQuality", "LOW")
         # Simple quality mapping
-        quality_map = {"LOW": 0, "HIGH": 1, "LOSSLESS": 2, "HI_RES": 3}
+        quality_map = {
+            "LOW": 0,
+            "HIGH": 1,
+            "LOSSLESS": 2,
+            "HI_RES": 3,
+            "HI_RES_LOSSLESS": 4,
+        }
         quality = quality_map.get(tidal_quality, 0)
 
-        # Tech estimation
-        sampling_rate = 44100 if quality >= 2 else None
-        bit_depth = 24 if tidal_quality == "HI_RES" else (16 if quality >= 2 else None)
+        # Prefer delivered technical properties; estimate only when omitted.
+        sampling_rate = normalize_sample_rate(resp.get("sampleRate"))
+        if sampling_rate is None and quality >= 2:
+            sampling_rate = 44100
+        bit_depth = typed(resp.get("bitDepth"), int | None)
+        if bit_depth is None:
+            bit_depth = 24 if quality >= 3 else (16 if quality >= 2 else None)
         container = "FLAC" if quality >= 2 else "MP4"
 
         item_id = str(resp.get("id"))
@@ -398,10 +409,20 @@ class AlbumMetadata:
         disctotal = resp.get("volumeNumber", 1)
         explicit = resp.get("explicit", False)
         tidal_quality = resp.get("audioQuality", "LOW")
-        quality_map = {"LOW": 0, "HIGH": 1, "LOSSLESS": 2, "HI_RES": 3}
+        quality_map = {
+            "LOW": 0,
+            "HIGH": 1,
+            "LOSSLESS": 2,
+            "HI_RES": 3,
+            "HI_RES_LOSSLESS": 4,
+        }
         quality = quality_map.get(tidal_quality, 0)
-        sampling_rate = 44100 if quality >= 2 else None
-        bit_depth = 24 if tidal_quality == "HI_RES" else (16 if quality >= 2 else None)
+        sampling_rate = normalize_sample_rate(resp.get("sampleRate"))
+        if sampling_rate is None and quality >= 2:
+            sampling_rate = 44100
+        bit_depth = typed(resp.get("bitDepth"), int | None)
+        if bit_depth is None:
+            bit_depth = 24 if quality >= 3 else (16 if quality >= 2 else None)
         covers = Covers.from_tidal(album_resp) or Covers()
         info = AlbumInfo(
             id=item_id,

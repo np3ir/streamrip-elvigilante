@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from ..filepath_utils import clean_filename, clean_track_title, truncate_filepath_to_max
+from ..multisource import normalize_sample_rate
 from .album import AlbumMetadata
 from .util import DEFAULT_ARTIST_SEPARATOR, dedup_artists, normalize_artist_name, typed
 
@@ -332,11 +333,21 @@ class TrackMetadata:
             lyrics = ""
         track_id = str(resp.get("id", ""))
         explicit = resp.get("explicit", False)
-        quality_map = {"LOW": 0, "HIGH": 1, "LOSSLESS": 2, "HI_RES": 3}
+        quality_map = {
+            "LOW": 0,
+            "HIGH": 1,
+            "LOSSLESS": 2,
+            "HI_RES": 3,
+            "HI_RES_LOSSLESS": 4,
+        }
         tidal_quality = resp.get("audioQuality", "LOW")
         quality = quality_map.get(tidal_quality, 0)
-        sampling_rate = 44100 if quality >= 2 else None
-        bit_depth = 24 if tidal_quality == "HI_RES" else (16 if quality >= 2 else None)
+        sampling_rate = normalize_sample_rate(resp.get("sampleRate"))
+        if sampling_rate is None and quality >= 2:
+            sampling_rate = 44100
+        bit_depth = typed(resp.get("bitDepth"), int | None)
+        if bit_depth is None:
+            bit_depth = 24 if quality >= 3 else (16 if quality >= 2 else None)
         info = TrackInfo(
             id=track_id,
             quality=quality,

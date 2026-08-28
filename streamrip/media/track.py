@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import aiohttp
 
 from .. import converter
+from ..audio_container import normalize_tidal_container
 from ..client import Client, Downloadable
 from ..config import Config
 from ..console import console
@@ -71,6 +72,10 @@ class Track(Media):
                 self.config.session.downloads.max_retries,
             )
             return
+        if self.downloadable.source == "tidal":
+            self.download_path = await normalize_tidal_container(
+                self.download_path, self.downloadable
+            )
         await self.postprocess()
 
     async def preprocess(self):

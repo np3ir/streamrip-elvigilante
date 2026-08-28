@@ -122,12 +122,14 @@ class BasicDownloadable(Downloadable):
         url: str,
         extension: str,
         source: str | None = None,
+        quality=None,
     ):
         self.session = session
         self.url = url
         self.extension = extension
         self._size = None
         self.source: str = source or "Unknown"
+        self.quality = quality
 
     async def _download(self, path: str, callback):
         await fast_async_download(path, self.url, self.session.headers, callback, session=self.session)
@@ -159,6 +161,24 @@ class DeezerDownloadable(Downloadable):
             self.extension = "mp3"
         else:
             self.extension = "flac"
+        from ..multisource import AudioQuality
+
+        self.audio_quality = (
+            AudioQuality(
+                codec="flac",
+                lossless=True,
+                bit_depth=16,
+                sample_rate_hz=44100,
+                channels=2,
+            )
+            if self.quality == 2
+            else AudioQuality(
+                codec="mp3",
+                lossless=False,
+                bitrate_kbps=320 if self.quality == 1 else 128,
+                channels=2,
+            )
+        )
         self.id = str(info["id"])
 
     async def _download(self, path: str, callback):
@@ -300,16 +320,21 @@ class TidalDownloadable(Downloadable):
         codec: str,
         encryption_key: str | None,
         restrictions,
+        *,
+        urls: tuple[str, ...] | None = None,
+        quality=None,
     ):
         self.session = session
         self.source = "tidal"
+        self.quality = quality
         codec = codec.lower()
         if codec in ("flac", "mqa"):
             self.extension = "flac"
         else:
             self.extension = "m4a"
 
-        if url is None:
+        self.urls = urls or ((url,) if url else ())
+        if not self.urls:
             # Turn CamelCase code into a readable sentence
             if restrictions:
                 words = re.findall(r"([A-Z][a-z]+)", restrictions[0]["code"])
@@ -319,16 +344,50 @@ class TidalDownloadable(Downloadable):
             raise NonStreamableError(
                 f"Tidal download: dl_info = {url, codec, encryption_key}"
             )
-        self.url = url
+        self.url = self.urls[0]
         self.enc_key = encryption_key
-        self.downloadable = BasicDownloadable(session, url, self.extension, "tidal")
+        self.downloadable = BasicDownloadable(session, self.url, self.extension, "tidal")
 
     async def _download(self, path: str, callback):
-        await self.downloadable._download(path, callback)
+        if len(self.urls) == 1:
+            await self.downloadable._download(path, callback)
+        else:
+            await self._download_segments(path, callback)
         if self.enc_key is not None:
             dec_bytes = await self._decrypt_mqa_file(path, self.enc_key)
             async with aiofiles.open(path, "wb") as audio:
                 await audio.write(dec_bytes)
+
+    async def _download_segments(self, path: str, callback, batch_size: int = 8):
+        """Download ordered DASH segments with bounded memory and atomic output."""
+
+        part_path = path + ".part"
+        try:
+            async with aiofiles.open(part_path, "wb") as output:
+                for start in range(0, len(self.urls), batch_size):
+                    batch = self.urls[start : start + batch_size]
+
+                    async def fetch(url: str) -> bytes:
+                        async with self.session.get(
+                            url,
+                            timeout=aiohttp.ClientTimeout(
+                                total=None, sock_connect=30, sock_read=120
+                            ),
+                        ) as response:
+                            response.raise_for_status()
+                            return await response.read()
+
+                    chunks = await asyncio.gather(*(fetch(url) for url in batch))
+                    for chunk in chunks:
+                        await output.write(chunk)
+                        callback(len(chunk))
+            os.replace(part_path, path)
+        except Exception:
+            try:
+                os.remove(part_path)
+            except FileNotFoundError:
+                pass
+            raise
 
     @property
     def _size(self):
