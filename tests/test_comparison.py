@@ -51,11 +51,12 @@ class FakeClient:
         self.pages = pages or []
         self.error = error
         self.delay = delay
+        self.queries = []
 
     async def search(self, media_type, query, limit):
         assert media_type == "track"
-        assert "Artist" in query and "Song" in query
         assert limit == 10
+        self.queries.append(query)
         await asyncio.sleep(self.delay)
         if self.error:
             raise self.error
@@ -130,6 +131,8 @@ async def test_compares_concurrently_and_selects_highest_fidelity():
     }
     assert report.selected.identity.source == "qobuz"
     assert report.errors == {}
+    assert clients["qobuz"].queries == ["USABC1234567", "Artist Song"]
+    assert clients["deezer"].queries == ["USABC1234567", "Artist Song"]
 
 
 @pytest.mark.asyncio
@@ -173,6 +176,29 @@ async def test_conflicting_isrc_is_rejected_before_stream_inspection():
 
     assert report.candidates == []
     assert report.selected is None
+
+
+@pytest.mark.asyncio
+async def test_duplicate_results_from_isrc_and_metadata_are_inspected_once():
+    qobuz = FakeClient(
+        "qobuz",
+        candidate("qobuz", "q1", 24, 192000),
+        [search_page("qobuz", "q1")],
+    )
+    calls = 0
+    original = qobuz.get_candidate
+
+    async def counted_candidate(source_id, quality):
+        nonlocal calls
+        calls += 1
+        return await original(source_id, quality)
+
+    qobuz.get_candidate = counted_candidate
+
+    report = await MultiSourceComparator({"qobuz": qobuz}).compare(REFERENCE)
+
+    assert report.selected.identity.source == "qobuz"
+    assert calls == 1
 
 
 @pytest.mark.asyncio

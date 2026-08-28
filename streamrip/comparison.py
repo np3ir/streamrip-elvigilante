@@ -99,17 +99,33 @@ class MultiSourceComparator:
             candidate = await client.get_candidate(reference.source_id, quality)
             return candidate if match_tracks(reference, candidate.identity) is not MatchKind.NONE else None
 
-        query = f"{reference.artist} {reference.title}".strip()
-        pages = await client.search("track", query, limit=self.search_limit)
         from .client.candidate import track_identity
 
         matches: list[tuple[int, TrackIdentity]] = []
-        for position, item in enumerate(search_items(source, pages)):
-            identity = track_identity(source, item)
-            kind = match_tracks(reference, identity)
-            if kind is not MatchKind.NONE:
-                priority = 0 if kind is MatchKind.ISRC else 1
-                matches.append((priority * self.search_limit + position, identity))
+        seen_ids: set[str] = set()
+        queries = []
+        if reference.isrc:
+            queries.append(reference.isrc.strip())
+        metadata_query = f"{reference.artist} {reference.title}".strip()
+        if metadata_query and metadata_query not in queries:
+            queries.append(metadata_query)
+
+        for query_index, query in enumerate(queries):
+            pages = await client.search("track", query, limit=self.search_limit)
+            for position, item in enumerate(search_items(source, pages)):
+                identity = track_identity(source, item)
+                if not identity.source_id or identity.source_id in seen_ids:
+                    continue
+                seen_ids.add(identity.source_id)
+                kind = match_tracks(reference, identity)
+                if kind is not MatchKind.NONE:
+                    match_priority = 0 if kind is MatchKind.ISRC else 1
+                    priority = (
+                        match_priority * len(queries) * self.search_limit
+                        + query_index * self.search_limit
+                        + position
+                    )
+                    matches.append((priority, identity))
 
         for _, identity in sorted(matches, key=lambda pair: pair[0]):
             candidate = await client.get_candidate(identity.source_id, quality)
