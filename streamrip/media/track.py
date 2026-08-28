@@ -250,7 +250,7 @@ class PendingSingle(Pending):
         except NonStreamableError: return None
         sep = self.config.session.metadata.artist_separator
         try:
-            album = AlbumMetadata.from_track_resp(resp, self.client.source, sep)
+            album = await self._album_metadata(resp, sep)
             meta = TrackMetadata.from_resp(album, self.client.source, resp, sep)
         except Exception as e:
             logger.error("Error parsing single metadata id=%s source=%s: %s", self.id, self.client.source, e)
@@ -289,6 +289,25 @@ class PendingSingle(Pending):
 
             lrc_content = await fetch_lrc(self.client, self.id, self.config)
             return Track(meta, downloadable, self.config, folder, embedded_cover_path, self.db, is_single=True, lrc_content=lrc_content)
+
+    async def _album_metadata(self, track_response: dict, artist_separator: str):
+        """Resolve full TIDAL album data so singles get authoritative dates."""
+
+        if self.client.source == "tidal":
+            album_id = (track_response.get("album") or {}).get("id")
+            if album_id:
+                try:
+                    album_response = await self.client.get_metadata(str(album_id), "album")
+                    return AlbumMetadata.from_tidal(album_response)
+                except Exception as error:
+                    logger.debug(
+                        "Could not resolve full TIDAL album %s: %s",
+                        album_id,
+                        error,
+                    )
+        return AlbumMetadata.from_track_resp(
+            track_response, self.client.source, artist_separator
+        )
 
     def _format_folder(self, meta: AlbumMetadata) -> str:
         c = self.config.session

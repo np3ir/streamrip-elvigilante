@@ -395,7 +395,13 @@ class AlbumMetadata:
         item_id = str(resp.get("id", ""))
         album = album_resp.get("title", "Unknown Album")
         tracktotal = 1
-        raw_date = resp.get("streamStartDate") or resp.get("dateAdded")
+        raw_date = (
+            resp.get("releaseDate")
+            or resp.get("date")
+            or album_resp.get("releaseDate")
+            or resp.get("streamStartDate")
+            or resp.get("dateAdded")
+        )
         release_date, year = cls.correct_release_date(raw_date)
         copyright = resp.get("copyright", "")
         artists = resp.get("artists", [])
