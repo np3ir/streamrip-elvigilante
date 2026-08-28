@@ -144,8 +144,7 @@ Commands:
 
 ## Next work
 
-1. Commit the verified TIDAL 429 circuit breaker separately.
-2. Review and remove the `Main` constructor's hard-coded AppData config override, which can ignore an explicit `--config-path`.
+1. Review and remove the `Main` constructor's hard-coded AppData config override, which can ignore an explicit `--config-path`.
 
 ## Committed opt-in best-source download
 
@@ -171,7 +170,9 @@ Committed as `90ac62a fix: harden tidal request pacing and refresh` (local only;
 - New tests: `tests/test_request_budget.py` and `tests/test_tidal_auth.py` cover concurrent spacing, safe default RPM, forced 401 refresh, and concurrent-refresh deduplication.
 - Validation: directed tests `7 passed`; Ruff clean; full suite `143 passed, 7 skipped, 1` pre-existing warning. No real service traffic or media download was performed.
 
-## Current uncommitted TIDAL 429 circuit breaker
+## Committed TIDAL 429 circuit breaker
+
+Committed as `49fe134 fix: stop sustained tidal rate-limit retries` (local only; not pushed).
 
 - `RateLimitGuard` counts HTTP 429 responses for the current TIDAL client/run and trips once at a deliberately tolerant default of 12 strikes.
 - A few transient 429 responses continue through the existing `Retry-After` and adaptive-backoff path.
@@ -190,6 +191,6 @@ Committed as `90ac62a fix: harden tidal request pacing and refresh` (local only;
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, and TIDAL request/refresh safety in `90ac62a`. Current uncommitted files are `streamrip/exceptions.py`, `streamrip/client/request_budget.py`, `streamrip/client/tidal.py`, `tests/test_request_budget.py`, `tests/test_tidal_auth.py`, and this memory update.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, and the 429 circuit breaker in `49fe134`. The working tree is expected to be clean.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
