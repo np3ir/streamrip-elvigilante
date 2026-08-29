@@ -129,7 +129,7 @@ Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 Latest full run after restoring the standalone search workflows:
 
-- `170 passed`
+- `175 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - No test failures; the run logs a dependency deprecation and a pre-existing unclosed-session diagnostic during unrelated tests.
 - Ruff clean on all modified/new files. A separate whole-repository Ruff run reports one pre-existing `RUF036` ordering issue in `streamrip/media/semaphore.py:10`; it is unrelated to the current comparison change.
@@ -299,6 +299,21 @@ Committed as `0b690b9 fix: select best matching service edition` (local only; no
 - Local tiddl-elvigilante inspection explains the discrepancy: it uses hybrid TIDAL authentication with a HiRes-capable session for MAX/24-bit and a separate TV-client session for reliable LOSSLESS/16-bit fallback. Its downloader explicitly re-requests `LOSSLESS` through the TV session when the HiRes session degrades a lossless-only track to `HIGH` AAC.
 - Streamrip currently stores and uses only one TIDAL session/client identity. Reproducing tiddl-elvigilante's dual-session routing is therefore the next required TIDAL fix; merely changing the configured quality tier cannot solve this case.
 
+## Hybrid TIDAL sessions and user-selected quality ceilings
+
+Committed as `db3fbfd feat: add hybrid tidal and quality ceilings` (local only; not pushed).
+
+- Introduces a second private token store and independent TV-client OAuth/session state for reliable TIDAL LOSSLESS fallback while preserving the existing HiRes token as primary.
+- Adds lazy fallback routing: when the primary HiRes session returns lossy audio for a requested lossless tier, the TV session requests LOSSLESS and the higher normalized delivery wins.
+- Adds `rip login tidal --fallback` device authorization for the second token, shared request-budget plumbing, explicit closing of both sessions, and an initial regression test for HiRes-to-TV fallback.
+- `rip compare` now accepts `--max-bit-depth` and `--max-sample-rate` as service-neutral strict ceilings. Example: requesting 16-bit searches TIDAL, Qobuz, and Deezer for the best matching delivery at or below 16-bit and never selects 24-bit merely because it normally ranks higher.
+- If the requested ceiling is unavailable, selection must cascade downward to the next-best actually delivered quality across all authenticated services.
+- Service marketing tiers are inputs only. The ceiling and fallback decision must use normalized delivered properties (lossless flag, bit depth, sample rate, bitrate, channels/spatial) and retain exact-ISRC/identity safeguards.
+- Lossless deliveries with unknown properties are excluded when their corresponding ceiling cannot be proven; lossy audio remains the final lower-quality fallback. For a 16-bit ceiling, service requests are proactively limited to their CD-quality tier where supported.
+- Live preview-only validation `compare --max-bit-depth 16 tidal 20115564` changed Qobuz from its normal 24-bit/88.2 kHz delivery to FLAC 16-bit/44.1 kHz and selected it over TIDAL AAC, tied technically with Deezer FLAC 16-bit/44.1 kHz. No audio was downloaded.
+- Validation: focused tests `52 passed`; full suite `175 passed, 7 skipped`; Ruff clean on all changed code/tests. The pre-existing dependency deprecation and unrelated unclosed-session diagnostic remain visible in the suite log.
+- Remaining live step: authorize the private TV fallback token, then verify that TIDAL album `111808317` changes from AAC to FLAC 16-bit/44.1 kHz without downloading audio.
+
 ## Explicit service-login foundation
 
 Committed as `72f1df0 feat: add secure service login commands` with documentation checkpoint `24d91d3 docs: record service login foundation` (local only; not pushed).
@@ -337,6 +352,6 @@ Committed as `2fda1e0 feat: add assisted deezer browser login`, with documentati
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, ISRC-first comparison in `3d0d832`, explicit service-login commands in `72f1df0`, browser-assisted Deezer login in `2fda1e0`, restored standalone search in `73dbc30`, and best-edition selection in `0b690b9`. The working tree is expected to be clean after this documentation checkpoint is committed.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, ISRC-first comparison in `3d0d832`, explicit service-login commands in `72f1df0`, browser-assisted Deezer login in `2fda1e0`, restored standalone search in `73dbc30`, best-edition selection in `0b690b9`, and hybrid TIDAL plus quality ceilings in `db3fbfd`. The working tree is expected to be clean after this documentation checkpoint is committed.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
