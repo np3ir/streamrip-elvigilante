@@ -127,9 +127,9 @@ Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 ## Validation baseline
 
-Latest full run after the explicit login-command foundation:
+Latest full run after restoring the standalone search workflows:
 
-- `163 passed`
+- `168 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - `0` runtime warnings in the final suite summary
 - Ruff clean on all modified/new files. A separate whole-repository Ruff run reports one pre-existing `RUF036` ordering issue in `streamrip/media/semaphore.py:10`; it is unrelated to the current comparison change.
@@ -145,7 +145,7 @@ Commands:
 ## Next work
 
 1. Remove the two exact temporary live-validation directories after user confirmation or through an allowed safe cleanup mechanism; both paths are listed below.
-2. Investigate and restore the broken standalone `rip search` CLI paths: both interactive and output-file modes currently call missing `Main` methods. This is separate from `rip compare`, which works.
+2. Identify a recording genuinely present in TIDAL, Deezer, and Qobuz, then run a preview-only comparison to validate identity matching and quality ranking across all three catalogs.
 3. Decide whether to prepare a side-by-side 2.2.8 installation without replacing global `rip 2.1.0`.
 
 ## Committed opt-in best-source download
@@ -256,7 +256,18 @@ Committed as `3d0d832 feat: search cross-service tracks by isrc` (local only; no
 - On 2026-08-28 the user supplied Deezer access. It was validated through hidden interactive input and saved only to Streamrip's private local configuration; the ARL is intentionally absent from this file, repository history, tests, and command arguments.
 - Preview-only `rip compare tidal 524417109` completed with all three clients available and no media download. TIDAL remained the sole candidate and winner at FLAC/lossless/24-bit/44.1 kHz; Qobuz and Deezer returned no valid equivalent recording.
 - A focused catalog query confirmed the reference ISRC is `UPL524417109`. Deezer returned zero results for both the raw and field-qualified ISRC. Its artist/title query returned one unrelated track with a conflicting ISRC, so the comparator correctly rejected it before stream-quality inspection.
-- An attempted non-downloading `rip search` probe exposed a separate pre-existing CLI defect: `cli.py` calls missing `Main.search_output_file()` and `Main.search_interactive()` methods. No product code was changed during credential validation; this defect is now a next-work item.
+- An attempted non-downloading `rip search` probe exposed a separate pre-existing CLI defect: `cli.py` called missing `Main.search_output_file()` and `Main.search_interactive()` methods. No product code was changed during credential validation; the defect was subsequently repaired in `73dbc30` as recorded below.
+
+## Restored standalone search workflows
+
+Committed as `73dbc30 fix: restore search workflows` (local only; not pushed).
+
+- Restored `Main.search_interactive()`, `Main.search_take_first()`, and `Main.search_output_file()` against the current normalized `SearchResults` and asynchronous queue architecture.
+- Interactive search queues only explicitly selected results. Output-file search writes UTF-8 JSON with unescaped Unicode in the importable `source`/`media_type`/`id`/`desc` format.
+- Added `add_all_by_id()` and `_queue_by_id()` so multiple selections reuse one authenticated client per service rather than repeating login work.
+- Empty-result searches now exit without creating a file or queueing media.
+- Preview-only live searches completed successfully against Qobuz, Deezer, and TIDAL and produced parseable temporary JSON files; the exact temporary files were removed afterward. Qobuz and Deezer returned unrelated textual matches for the probe, while TIDAL returned the expected Scorpions recording. No selection or audio download occurred.
+- Validation: focused search tests `5 passed`; full suite `168 passed, 7 skipped`; Ruff clean on the changed code/tests; `git diff --check` clean except informational Windows line-ending notices.
 
 ## Explicit service-login foundation
 
@@ -273,7 +284,7 @@ Committed as `72f1df0 feat: add secure service login commands` with documentatio
 
 ## Deezer browser-assisted login
 
-Current uncommitted implementation in `pyproject.toml`, `poetry.lock`, `streamrip/rip/login.py`, `streamrip/rip/cli.py`, and `tests/test_login.py`:
+Committed as `2fda1e0 feat: add assisted deezer browser login`, with documentation checkpoints `65ee91a` and `573a888` (local only; not pushed).
 
 - `rip login deezer` now defaults to an isolated Deezer login window backed by WebView2. After the user completes Deezer's own login, Streamrip reads only the resulting `arl` cookie, closes the window, validates it through the existing client, and persists it only after successful validation.
 - `rip login deezer --arl` retains hidden manual entry as an explicit fallback.
@@ -296,6 +307,6 @@ Current uncommitted implementation in `pyproject.toml`, `poetry.lock`, `streamri
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, ISRC-first comparison in `3d0d832`, and explicit service-login commands in `72f1df0`. Browser-assisted Deezer login, its optional dependency lock update, tests, and this memory update are modified but not yet committed.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, ISRC-first comparison in `3d0d832`, explicit service-login commands in `72f1df0`, browser-assisted Deezer login in `2fda1e0`, and restored standalone search in `73dbc30`. The working tree is expected to be clean after this documentation checkpoint is committed.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
