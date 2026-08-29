@@ -445,4 +445,13 @@ Implemented on 2026-08-29 as the next phase of the mass-library planner.
 - Validation: focused library tests `13 passed`; full suite `197 passed, 7 skipped`; Ruff clean on all changed code/tests; `git diff --check` reported only informational Windows line-ending notices.
 - No media was downloaded and no credentials, global installation, push, or release were touched during this audit.
 
+## Reference metadata request reuse
+
+- The next efficiency audit found one avoidable reference-service metadata request per library track: collection expansion already supplied the catalog track response, but comparison called `get_candidate`, which fetched the same track metadata again before resolving its audio manifest.
+- `LibraryTrack` now carries that already-fetched response only for the lifetime of the streamed planning item. The library comparator combines it with a newly resolved downloadable to build the reference candidate, eliminating the duplicate metadata call while preserving delivered-quality inspection and same-service best-edition searches.
+- Final file construction still requests canonical track and full-album metadata independently. This optimization therefore does not trade away tag, edition, cover, lyrics, disc-layout, or path quality.
+- Raw reference metadata is explicitly omitted from `track_asdict`, preventing future manifests/checkpoints from becoming large or retaining unnecessary service payloads.
+- Changed files: `streamrip/library.py`, `streamrip/rip/cli.py`, and `tests/test_library.py`. Validation: focused library/CLI tests `18 passed`; full suite `197 passed, 7 skipped`; Ruff clean; `git diff --check` reported only informational Windows line-ending notices.
+- No media was downloaded and no private configuration, credentials, global installation, push, or release were touched.
+
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.

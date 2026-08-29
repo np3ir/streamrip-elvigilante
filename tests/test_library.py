@@ -58,6 +58,7 @@ async def test_playlist_tracks_preserve_order_and_recording_keys():
 
     assert [item.source_id for item in result] == ["t1", "t2"]
     assert [item.recording_key for item in result] == ["isrc:ISRC1", "isrc:ISRC2"]
+    assert result[0].reference_metadata["id"] == "t1"
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import AsyncIterator, Callable, Iterable
 
@@ -35,6 +35,7 @@ class LibraryTrack:
     isrc: str | None
     album_id: str | None = None
     album_title: str | None = None
+    reference_metadata: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def recording_key(self) -> str:
@@ -164,6 +165,7 @@ def _library_track(source: str, item: dict) -> LibraryTrack | None:
         isrc=identity.isrc,
         album_id=str(album.get("id")) if album.get("id") is not None else None,
         album_title=album.get("title"),
+        reference_metadata=item,
     )
 
 
@@ -304,4 +306,6 @@ class LibraryCheckpoint:
 def track_asdict(track: LibraryTrack) -> dict:
     """Stable serialization helper for future library manifests."""
 
-    return asdict(track)
+    serialized = asdict(track)
+    serialized.pop("reference_metadata", None)
+    return serialized

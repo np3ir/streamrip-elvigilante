@@ -918,6 +918,7 @@ async def library(
 ):
     """Build a resumable best-quality library plan from a service URL."""
 
+    from ..client.candidate import service_candidate
     from ..comparison import MultiSourceComparator, service_quality_for_ceiling
     from ..library import (
         LibraryCheckpoint,
@@ -1029,8 +1030,13 @@ async def library(
                     break
                 attempted += 1
                 try:
-                    reference = await reference_client.get_candidate(
+                    reference_downloadable = await reference_client.get_downloadable(
                         track.source_id, reference_quality
+                    )
+                    reference = service_candidate(
+                        source,
+                        track.reference_metadata,
+                        reference_downloadable,
                     )
                     report = await comparator.compare(
                         reference.identity,
