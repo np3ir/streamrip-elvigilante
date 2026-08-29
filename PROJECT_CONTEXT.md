@@ -145,7 +145,7 @@ Commands:
 ## Next work
 
 1. Remove the two exact temporary live-validation directories after user confirmation or through an allowed safe cleanup mechanism; both paths are listed below.
-2. With explicit user authorization, run one controlled `--download-best` test for the verified Daft Punk recording and inspect the resulting file/container/metadata. Preview-only comparison is already complete.
+2. Add a user-facing URL/query entry point for best-source selection so users do not need to discover a service track ID before running `compare`.
 3. Decide whether to prepare a side-by-side 2.2.8 installation without replacing global `rip 2.1.0`.
 
 ## Committed opt-in best-source download
@@ -281,6 +281,15 @@ Committed as `0b690b9 fix: select best matching service edition` (local only; no
 - A superficially similar Qobuz result, `8767428`, correctly resolved to a different exact-ISRC set (TIDAL `19823990`, Deezer `66609426`) at up to 24-bit/44.1 kHz; this explained the earlier apparent inconsistency and confirms that matching is recording-specific rather than title-only.
 - All temporary JSON catalog-probe files and their exact temporary directory were removed after validation.
 - Validation: comparison/CLI tests `15 passed`; full suite `170 passed, 7 skipped`; Ruff clean on changed code/tests; `git diff --check` clean except informational Windows line-ending notices. The suite still logs a dependency deprecation and a pre-existing unclosed-session diagnostic during unrelated tests; neither failed the suite.
+
+## Controlled best-source download validation
+
+- With explicit user authorization, the isolated Streamrip 2.2.8 executable ran `compare tidal 20115564 --download-best`. The global `rip 2.1.0` installation was not invoked or modified.
+- The comparator again matched TIDAL `20115564`, Qobuz `9140031`, and Deezer `67238735` by exact ISRC and selected Qobuz at FLAC/lossless/24-bit/88.2 kHz.
+- The normal download pipeline completed successfully and created `C:\Users\DJ Elvigilante\Music\Daft Punk\(2023-11-17) Random Access Memories\Daft Punk, Pharrell Williams - Get Lucky (feat. Nile Rodgers).flac` (133,542,790 bytes).
+- Independent `ffprobe` inspection confirmed a FLAC audio stream, 24-bit raw depth, 88,200 Hz, stereo, duration 369.614558 seconds, plus an embedded MJPEG cover stream.
+- Tags include title, artist, album, copyright, track 8, disc 1, year 2023, and ISRC `USQX91300108`. SHA-256: `27464EACA9B9B2084404205B0457149D0D686A5E7955BEB9831A279B35BB97CF`.
+- This was the first authorized real-media download for the cross-service selector. The file remains in the configured music library; it was not removed because it is the requested output.
 
 ## Explicit service-login foundation
 
