@@ -127,9 +127,9 @@ Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 ## Validation baseline
 
-Latest full run after ISRC-first cross-service discovery:
+Latest full run after the explicit login-command foundation:
 
-- `156 passed`
+- `161 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - `0` runtime warnings in the final suite summary
 - Ruff clean on all modified/new files. A separate whole-repository Ruff run reports one pre-existing `RUF036` ordering issue in `streamrip/media/semaphore.py:10`; it is unrelated to the current comparison change.
@@ -145,7 +145,8 @@ Commands:
 ## Next work
 
 1. Remove the two exact temporary live-validation directories after user confirmation or through an allowed safe cleanup mechanism; both paths are listed below.
-2. Add or repair Deezer credentials only if the user wants full three-service live comparison; never request them during a preview automatically.
+2. Add Deezer browser-assisted login (WebView2 on Windows) while retaining the validated hidden manual-ARL path.
+3. Investigate and restore the broken standalone `rip search` CLI paths: both interactive and output-file modes currently call missing `Main` methods. This is separate from `rip compare`, which works.
 3. Decide whether to prepare a side-by-side 2.2.8 installation without replacing global `rip 2.1.0`.
 
 ## Committed opt-in best-source download
@@ -243,13 +244,33 @@ Committed as `97a2c2d fix: resolve tidal single album metadata` (local only; not
 
 ## ISRC-first cross-service discovery
 
-Current uncommitted implementation in `streamrip/comparison.py` and `tests/test_comparison.py`:
+Committed as `3d0d832 feat: search cross-service tracks by isrc` (local only; not pushed). Documentation checkpoint: `cb9abdc docs: record isrc-first live comparison`.
 
 - Secondary-service discovery now searches the exact reference ISRC first, then falls back to `artist + title` metadata search.
 - Results returned by both queries are de-duplicated by service track ID before any stream manifest/file-URL inspection, preventing repeated quality-resolution requests.
 - Candidate ordering continues to prefer an exact ISRC match over metadata fallback and re-verifies identity after full candidate resolution.
 - Controlled live preview `rip compare tidal 524417109` completed without downloading audio. TIDAL remained the winner at FLAC/lossless/24-bit/44.1 kHz; Qobuz returned no equivalent result even with ISRC-first discovery, and Deezer remained unavailable because no valid authentication was configured. No credential prompt appeared.
 - Validation: comparison tests `9 passed`; full suite `156 passed, 7 skipped`; Ruff clean on the two changed files.
+
+## Deezer authenticated live validation
+
+- On 2026-08-28 the user supplied Deezer access. It was validated through hidden interactive input and saved only to Streamrip's private local configuration; the ARL is intentionally absent from this file, repository history, tests, and command arguments.
+- Preview-only `rip compare tidal 524417109` completed with all three clients available and no media download. TIDAL remained the sole candidate and winner at FLAC/lossless/24-bit/44.1 kHz; Qobuz and Deezer returned no valid equivalent recording.
+- A focused catalog query confirmed the reference ISRC is `UPL524417109`. Deezer returned zero results for both the raw and field-qualified ISRC. Its artist/title query returned one unrelated track with a conflicting ISRC, so the comparator correctly rejected it before stream-quality inspection.
+- An attempted non-downloading `rip search` probe exposed a separate pre-existing CLI defect: `cli.py` calls missing `Main.search_output_file()` and `Main.search_interactive()` methods. No product code was changed during credential validation; this defect is now a next-work item.
+
+## Explicit service-login foundation
+
+Current uncommitted implementation in `streamrip/rip/login.py`, `streamrip/rip/cli.py`, `streamrip/client/qobuz.py`, and `tests/test_login.py`:
+
+- New `rip login` command group with `qobuz`, `deezer`, `status`, and `logout` commands.
+- Qobuz supports hidden email/password input or `--token` user-ID/token input. After a successful email/password exchange, only the returned user ID and `user_auth_token` are persisted; neither the clear password nor its MD5 is written to disk.
+- Qobuz app ID and reusable app-secret candidates remain automatically discovered through the existing web-player extraction path. Manual token login remains available, matching QobuzDownloaderX's two login modes.
+- Removed Qobuz credential values and full login responses from debug logs and authentication exceptions.
+- Deezer manual ARL entry is hidden and validated before replacing the credential stored on disk. Browser-assisted login remains the next phase; manual ARL must remain as a fallback.
+- `rip login status` reports only whether TIDAL/Qobuz/Deezer are configured. `rip login logout SERVICE` removes the selected user credential while preserving reusable Qobuz app metadata.
+- Real command-object validation shows all three current services as configured without printing credential values. No login, logout, download, or user-config mutation was performed by that status check.
+- Validation: login tests `5 passed`; Ruff clean on all changed code/tests; full suite `161 passed, 7 skipped`.
 
 ## Safety and decision constraints
 
@@ -261,6 +282,6 @@ Current uncommitted implementation in `streamrip/comparison.py` and `tests/test_
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, and TIDAL single metadata correction in `97a2c2d`. The ISRC-first comparison implementation, its tests, and this memory update are currently modified but not yet committed.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, and ISRC-first comparison in `3d0d832`. The explicit-login implementation, tests, and this accumulated memory update are modified but not yet committed.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
