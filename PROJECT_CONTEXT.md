@@ -13,6 +13,8 @@ Evolve `streamrip-elvigilante` 2.2.8 into a robust multi-source downloader:
 
 Default fidelity policy agreed during implementation: lossless stereo FLAC outranks lossy spatial/Atmos. Among lossless candidates, prefer bit depth, then sample rate, then bitrate. ISRC is the strong recording identity; title + artist + duration (3-second tolerance) is a conservative fallback when ISRC is absent.
 
+Service routing policy agreed on 2026-08-28: TIDAL is primary, Deezer secondary, and Qobuz tertiary when normalized delivered quality is equal. Service priority never overrides objectively better delivered fidelity. Exact normalized ISRC remains the cross-service identity key.
+
 ## Environment
 
 - Repository: `G:\My Drive\Backups\zhome-2026-07-25\Streamrip`
@@ -162,6 +164,15 @@ Implemented on 2026-08-28; pending local checkpoint commit at the time of this m
 - Unit coverage was added for album, playlist, and artist resolution, including ordered de-duplication. Focused comparison/CLI validation: `19 passed`.
 - Live preview used `https://tidal.com/album/545097792` (Bryan Adams, `Tough Town`, 10 tracks). All ten recordings matched Qobuz and Deezer exactly by ISRC. With the configured 16-bit/44.1-kHz ceiling, Qobuz and Deezer delivered FLAC 16/44.1; Qobuz won the deterministic tie on all ten. TIDAL delivered EAC3 spatial. The command completed with `Collection winners: qobuz: 10`; no media was downloaded.
 - Full suite: `180 passed, 7 skipped`. Ruff is clean on all changed files. Whole-tree Ruff continues to report only the pre-existing `RUF036` in `streamrip/media/semaphore.py:10`; the dependency deprecation and unrelated unclosed-session diagnostic also remain non-failing.
+
+## Explicit service tie-break priority
+
+Implemented after collection comparison on 2026-08-28; pending local checkpoint commit at the time of this memory update.
+
+- `choose_best()` now uses `TIDAL > Deezer > Qobuz` only after the full normalized quality rank is equal.
+- Higher losslessness, bit depth, sample rate, bitrate, channel count, or spatial rank continues to win before service preference; this preserves the project's delivered-quality objective.
+- Tests prove an exact-quality tie selects TIDAL, removal of TIDAL selects Deezer, and a higher-resolution Qobuz delivery still beats lower-resolution TIDAL.
+- Focused multisource/comparison validation: `33 passed`; Ruff clean on changed code and tests.
 
 ## Committed opt-in best-source download
 

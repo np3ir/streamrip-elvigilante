@@ -19,6 +19,10 @@ class MatchKind(str, Enum):
     NONE = "none"
 
 
+# Service order applies only after normalized delivered quality is equal.
+SERVICE_PRIORITY = {"tidal": 3, "deezer": 2, "qobuz": 1}
+
+
 @dataclass(frozen=True, slots=True)
 class TrackIdentity:
     source: str
@@ -162,6 +166,6 @@ def choose_best(
                 int(quality.spatial),
                 int(quality.lossless),
             )
-        return rank, item.identity.source
+        return rank, SERVICE_PRIORITY.get(item.identity.source, 0)
 
     return max(eligible, key=selection_rank)

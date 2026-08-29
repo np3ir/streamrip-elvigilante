@@ -79,6 +79,35 @@ def test_higher_lossless_resolution_wins():
     assert choose_best([cd, hires]) is hires
 
 
+def test_equal_quality_prefers_tidal_then_deezer_then_qobuz():
+    quality = AudioQuality(
+        codec="flac",
+        lossless=True,
+        bit_depth=16,
+        sample_rate_hz=44100,
+        channels=2,
+    )
+    tidal = candidate("tidal", quality)
+    deezer = candidate("deezer", quality)
+    qobuz = candidate("qobuz", quality)
+
+    assert choose_best([qobuz, deezer, tidal]) is tidal
+    assert choose_best([qobuz, deezer]) is deezer
+
+
+def test_service_priority_never_overrides_better_delivered_quality():
+    tidal = candidate(
+        "tidal",
+        AudioQuality(codec="flac", lossless=True, bit_depth=16, sample_rate_hz=44100),
+    )
+    qobuz = candidate(
+        "qobuz",
+        AudioQuality(codec="flac", lossless=True, bit_depth=24, sample_rate_hz=96000),
+    )
+
+    assert choose_best([tidal, qobuz]) is qobuz
+
+
 def test_bit_depth_ceiling_prefers_16_bit_over_higher_resolution():
     cd = candidate(
         "deezer",
