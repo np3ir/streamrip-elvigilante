@@ -428,4 +428,12 @@ Implemented on 2026-08-29 as the next phase of the mass-library planner.
 - Validation: focused library tests `10 passed`; full suite `194 passed, 7 skipped`; Ruff clean on all changed code/tests; `git diff --check` reported only informational Windows line-ending notices.
 - No real audio was downloaded during this phase. A small explicitly authorized live download remains desirable later to verify final directory, embedded tags, cover, lyrics, checkpoint advancement, and mixed-source failure recovery end to end.
 
+### Authorized live library validation
+
+- On 2026-08-29 the user explicitly authorized one real transfer from the massive TIDAL playlist. The isolated 2.2.8 development executable ran `rip library <playlist> --tracks --download --max-tracks 1`; global `rip 2.1.0` was not invoked or modified.
+- The canonical TIDAL recording was Gepe / Mon Laferte `BOLERo LIBRA`, exact ISRC `ES71G2420467`. Deezer won delivery at FLAC/lossless/16-bit/44.1 kHz under the permanent ceiling and service-priority policy. The command reported `processed=1`, `attempted=1`, `failed=0`, and no duplicates or resume skips.
+- The resulting canonical path is `C:\Users\DJ Elvigilante\Music\Gepe\(2024-09-26) BOLERo LIBRA\Gepe, Mon Laferte - BOLERo LIBRA.flac` (18,157,098 bytes). Mutagen independently confirmed FLAC, 16-bit, 44,100 Hz, stereo, duration 172.145 seconds, one embedded picture, track/disc 1, title, artists, album artist, album, year, and the expected ISRC. SHA-256: `61EDEB5999D1DA1CC043F48638A5D02AF59B0ACE0DAE7DCAB2F3684E120835AE`.
+- The private checkpoint `d71162429ed3bc1b9cd7.json` contains the job signature and completed key `isrc:ES71G2420467`, proving completion advanced only after successful processing. It contains no credential or track metadata. The command was not rerun with `--resume`, because doing so would intentionally advance to and download a second track.
+- No standalone `.lrc` was produced for this delivery; cover presence was verified through the embedded FLAC picture. Future controlled validation should exercise a forced transfer failure and recovery without downloading additional successful media unnecessarily.
+
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
