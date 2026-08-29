@@ -603,6 +603,13 @@ async def search(ctx, first, output_file, num_results, source, media_type, query
     help="Service to compare; repeat the option. Defaults to all three.",
 )
 @click.option(
+    "--priority",
+    "service_priority",
+    multiple=True,
+    type=click.Choice(["tidal", "qobuz", "deezer"], case_sensitive=False),
+    help="Tie-break service order; repeat from highest to lowest priority.",
+)
+@click.option(
     "--type",
     "media_type",
     type=click.Choice(["track", "album", "playlist", "artist"], case_sensitive=False),
@@ -639,6 +646,7 @@ async def compare_sources(
     download_best,
     media_type,
     services,
+    service_priority,
     max_bit_depth,
     max_sample_rate,
     prefer_lossless,
@@ -683,6 +691,10 @@ async def compare_sources(
 
     with ctx.obj["config"] as cfg:
         policy = cfg.session.comparison
+        configured_priority = tuple(policy.service_priority)
+        effective_priority = tuple(
+            dict.fromkeys((*service_priority, *configured_priority))
+        )
         bit_depth = (
             max_bit_depth
             if max_bit_depth is not None
@@ -745,7 +757,10 @@ async def compare_sources(
                 )
                 for service in active_clients
             }
-            comparator = MultiSourceComparator(active_clients)
+            comparator = MultiSourceComparator(
+                active_clients,
+                service_priority=effective_priority,
+            )
             winners: dict[str, int] = {}
             selected_tracks = []
             for position, track_id in enumerate(collection.track_ids, start=1):

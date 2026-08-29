@@ -21,13 +21,16 @@ class ComparisonReport:
     candidates: list[ServiceCandidate] = field(default_factory=list)
     errors: dict[str, str] = field(default_factory=dict)
     ceiling: QualityCeiling | None = None
+    service_priority: tuple[str, ...] = ("tidal", "deezer", "qobuz")
 
     @property
     def selected(self) -> ServiceCandidate | None:
         if not self.candidates:
             return None
         try:
-            return choose_best(self.candidates, self.ceiling)
+            return choose_best(
+                self.candidates, self.ceiling, self.service_priority
+            )
         except ValueError:
             return None
 
@@ -135,9 +138,16 @@ def service_quality_for_ceiling(
 class MultiSourceComparator:
     """Find and inspect equivalent recordings across authenticated clients."""
 
-    def __init__(self, clients: dict[str, object], *, search_limit: int = 10):
+    def __init__(
+        self,
+        clients: dict[str, object],
+        *,
+        search_limit: int = 10,
+        service_priority: tuple[str, ...] = ("tidal", "deezer", "qobuz"),
+    ):
         self.clients = clients
         self.search_limit = search_limit
+        self.service_priority = service_priority
 
     async def compare(
         self,
@@ -146,7 +156,11 @@ class MultiSourceComparator:
         reference_candidate: ServiceCandidate | None = None,
         ceiling: QualityCeiling | None = None,
     ) -> ComparisonReport:
-        report = ComparisonReport(reference, ceiling=ceiling)
+        report = ComparisonReport(
+            reference,
+            ceiling=ceiling,
+            service_priority=self.service_priority,
+        )
         qualities = quality_by_source or {}
         results = await asyncio.gather(
             *(

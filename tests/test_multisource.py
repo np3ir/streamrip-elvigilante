@@ -108,6 +108,23 @@ def test_service_priority_never_overrides_better_delivered_quality():
     assert choose_best([tidal, qobuz]) is qobuz
 
 
+def test_custom_service_priority_changes_only_equal_quality_tie():
+    quality = AudioQuality(
+        codec="flac",
+        lossless=True,
+        bit_depth=16,
+        sample_rate_hz=44100,
+        channels=2,
+    )
+    tidal = candidate("tidal", quality)
+    deezer = candidate("deezer", quality)
+
+    assert choose_best(
+        [tidal, deezer],
+        service_priority=["deezer", "tidal", "qobuz"],
+    ) is deezer
+
+
 def test_bit_depth_ceiling_prefers_16_bit_over_higher_resolution():
     cd = candidate(
         "deezer",

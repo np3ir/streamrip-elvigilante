@@ -23,6 +23,15 @@ class MatchKind(str, Enum):
 SERVICE_PRIORITY = {"tidal": 3, "deezer": 2, "qobuz": 1}
 
 
+def service_priority_rank(priority: list[str] | tuple[str, ...] | None) -> dict[str, int]:
+    """Return a complete ranking, preserving configured order and safe defaults."""
+
+    order = list(priority or ())
+    order.extend(service for service in SERVICE_PRIORITY if service not in order)
+    size = len(order)
+    return {service: size - position for position, service in enumerate(order)}
+
+
 @dataclass(frozen=True, slots=True)
 class TrackIdentity:
     source: str
@@ -141,6 +150,7 @@ def match_tracks(
 def choose_best(
     candidates: list[ServiceCandidate],
     ceiling: QualityCeiling | None = None,
+    service_priority: list[str] | tuple[str, ...] | None = None,
 ) -> ServiceCandidate:
     """Choose the highest-fidelity candidate with a stable source tie-break."""
 
@@ -153,6 +163,8 @@ def choose_best(
     )
     if not eligible:
         raise ValueError("No candidate satisfies the requested quality ceiling")
+    priority_rank = service_priority_rank(service_priority)
+
     def selection_rank(item: ServiceCandidate):
         quality = item.quality
         if ceiling is None or ceiling.prefer_lossless:
@@ -166,6 +178,6 @@ def choose_best(
                 int(quality.spatial),
                 int(quality.lossless),
             )
-        return rank, SERVICE_PRIORITY.get(item.identity.source, 0)
+        return rank, priority_rank.get(item.identity.source, 0)
 
     return max(eligible, key=selection_rank)

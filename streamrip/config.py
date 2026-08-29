@@ -7,6 +7,7 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass, fields
+from dataclasses import field as dataclass_field
 from pathlib import Path
 
 import click
@@ -97,6 +98,9 @@ class ComparisonConfig:
     max_sample_rate: float = 0.0
     prefer_lossless: bool = True
     fallback_to_lossy: bool = True
+    service_priority: list[str] = dataclass_field(
+        default_factory=lambda: ["tidal", "deezer", "qobuz"]
+    )
 
 
 @dataclass(slots=True)
@@ -297,6 +301,15 @@ class ConfigData:
             comparison.max_bit_depth = 0
         if comparison.max_sample_rate < 0:
             comparison.max_sample_rate = 0.0
+        valid_services = ("tidal", "deezer", "qobuz")
+        configured_priority = [
+            str(service).lower()
+            for service in comparison.service_priority
+            if str(service).lower() in valid_services
+        ]
+        comparison.service_priority = list(
+            dict.fromkeys((*configured_priority, *valid_services))
+        )
         misc = MiscConfig(**toml["misc"])  # type: ignore
 
         return cls(

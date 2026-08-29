@@ -174,6 +174,14 @@ Implemented after collection comparison on 2026-08-28; pending local checkpoint 
 - Tests prove an exact-quality tie selects TIDAL, removal of TIDAL selects Deezer, and a higher-resolution Qobuz delivery still beats lower-resolution TIDAL.
 - Focused multisource/comparison validation: `33 passed`; Ruff clean on changed code and tests.
 
+### Configurable priority order
+
+- Added permanent `[comparison].service_priority`, represented as an ordered TOML array. Default: `["tidal", "deezer", "qobuz"]`.
+- Added repeatable CLI override `--priority SERVICE`; values are supplied from highest to lowest priority. Omitted services are appended using the permanent order, so partial overrides remain complete and deterministic.
+- Configuration loading lowercases entries, removes duplicates/unknown services, and appends any missing supported services safely. Existing configurations without the new field load the default without requiring a schema-version migration.
+- The user's active private config now explicitly stores TIDAL, Deezer, Qobuz order. Backup: `config.toml.before-service-priority.bak`; no credential values were printed or copied.
+- Tests cover configuration persistence and a custom Deezer-first tie. Full suite: `183 passed, 7 skipped`; focused config/multisource/comparison/CLI tests: `50 passed`; Ruff clean on changed files.
+
 ## Committed opt-in best-source download
 
 Committed as `16d01df feat: download best matching source` (local only; not pushed).

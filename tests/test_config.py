@@ -293,6 +293,7 @@ def test_comparison_policy_backfills_and_persists(tmp_path):
     config.file.comparison.max_bit_depth = 16
     config.file.comparison.max_sample_rate = 44.1
     config.file.comparison.fallback_to_lossy = False
+    config.file.comparison.service_priority = ["deezer", "tidal", "qobuz"]
     config.file.set_modified()
     config.save_file()
 
@@ -300,6 +301,11 @@ def test_comparison_policy_backfills_and_persists(tmp_path):
     assert reloaded.session.comparison.max_bit_depth == 16
     assert reloaded.session.comparison.max_sample_rate == 44.1
     assert reloaded.session.comparison.fallback_to_lossy is False
+    assert reloaded.session.comparison.service_priority == [
+        "deezer",
+        "tidal",
+        "qobuz",
+    ]
 
 
 def test_config_update_on_save():
