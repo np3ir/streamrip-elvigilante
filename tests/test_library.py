@@ -1,3 +1,4 @@
+import asyncio
 import json
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -11,6 +12,7 @@ from streamrip.library import (
     library_job_signature,
 )
 from streamrip.media.track import Track
+from streamrip.rip.main import Main
 
 
 def track(track_id, isrc, album_id="a1", artists=None):
@@ -234,6 +236,7 @@ async def test_track_failure_does_not_advance_resume_checkpoint(tmp_path):
     database = Mock()
     database.isrc_downloaded.return_value = False
     completed = Mock()
+    failed = Mock()
     item = Track(
         metadata,
         downloadable,
@@ -242,10 +245,41 @@ async def test_track_failure_does_not_advance_resume_checkpoint(tmp_path):
         None,
         database,
         completion_callback=completed,
+        failure_callback=failed,
         failure_id="d1",
     )
 
     await item.rip()
 
     completed.assert_not_called()
+    failed.assert_called_once_with()
     database.set_failed.assert_called_once_with("deezer", "track", "d1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_stage", ["none", "resolve", "rip"])
+async def test_worker_reports_each_library_failure_once(failure_stage):
+    main = Main.__new__(Main)
+    main.queue = asyncio.Queue()
+    main.skipped_items = 0
+    failed = Mock()
+    pending = Mock(failure_callback=failed)
+
+    if failure_stage == "none":
+        pending.resolve = AsyncMock(return_value=None)
+    elif failure_stage == "resolve":
+        pending.resolve = AsyncMock(side_effect=RuntimeError("metadata failed"))
+    else:
+        media = Mock()
+        media.rip = AsyncMock(side_effect=RuntimeError("postprocess failed"))
+        pending.resolve = AsyncMock(return_value=media)
+
+    await main.queue.put(pending)
+    worker = asyncio.create_task(main.worker_loop(0))
+    await main.queue.join()
+    worker.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await worker
+
+    failed.assert_called_once_with()
+    assert main.skipped_items == 1

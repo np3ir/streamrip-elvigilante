@@ -59,6 +59,7 @@ class PendingLibraryTrack(Pending):
     config: Config
     db: Database
     completion_callback: Callable[[], None] | None = None
+    failure_callback: Callable[[], None] | None = None
 
     async def resolve(self) -> Track | None:
         reference_source = self.reference_client.source
@@ -98,6 +99,7 @@ class PendingLibraryTrack(Pending):
             self.db,
             lrc_content=lyrics,
             completion_callback=self.completion_callback,
+            failure_callback=self.failure_callback,
             failure_id=self.audio_id,
         )
 

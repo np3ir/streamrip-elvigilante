@@ -436,4 +436,13 @@ Implemented on 2026-08-29 as the next phase of the mass-library planner.
 - The private checkpoint `d71162429ed3bc1b9cd7.json` contains the job signature and completed key `isrc:ES71G2420467`, proving completion advanced only after successful processing. It contains no credential or track metadata. The command was not rerun with `--resume`, because doing so would intentionally advance to and download a second track.
 - No standalone `.lrc` was produced for this delivery; cover presence was verified through the embedded FLAC picture. Future controlled validation should exercise a forced transfer failure and recovery without downloading additional successful media unnecessarily.
 
+## Accurate library failure accounting
+
+- The post-validation audit found that `rip library` could print `failed=0` when a queued worker later failed during metadata resolution, transfer, or post-processing. `Main.worker_loop` caught those failures internally, while the CLI counter covered only comparison/planning failures.
+- A failure callback now flows through `PendingLibraryTrack`, `Track`, `Main.add_library_track`, and the library CLI. Final transfer exhaustion, a `None` resolution, a resolution exception, and a later media-processing exception each increment the library failure summary exactly once without invoking the completion callback or advancing the resume checkpoint.
+- Failure database identity remains the actual audio service and winning-service track ID. Successful canonical identity remains the reference track and ISRC.
+- Changed product files: `streamrip/library.py`, `streamrip/media/track.py`, `streamrip/rip/main.py`, and `streamrip/rip/cli.py`; regression coverage is in `tests/test_library.py`.
+- Validation: focused library tests `13 passed`; full suite `197 passed, 7 skipped`; Ruff clean on all changed code/tests; `git diff --check` reported only informational Windows line-ending notices.
+- No media was downloaded and no credentials, global installation, push, or release were touched during this audit.
+
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.

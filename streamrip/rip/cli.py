@@ -1006,6 +1006,10 @@ async def library(
             seen: set[str] = set()
             queued = []
 
+            def mark_download_failed():
+                nonlocal failed
+                failed += 1
+
             console.print(
                 f"[bold cyan]Library job[/bold cyan] — {media_type} → {expansion}; "
                 f"mode={'preview' if dry_run else 'download'}; signature={signature}"
@@ -1080,6 +1084,7 @@ async def library(
                         audio_client=clients[winner],
                         audio_quality=qualities[winner],
                         completion_callback=lambda key=key: checkpoint.mark_done(key),
+                        failure_callback=mark_download_failed,
                     )
                 await main.rip()
 

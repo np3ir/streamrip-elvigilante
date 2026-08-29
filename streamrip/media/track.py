@@ -40,6 +40,7 @@ class Track(Media):
     from_playlist: bool = False
     lrc_content: str | None = None
     completion_callback: Callable[[], None] | None = None
+    failure_callback: Callable[[], None] | None = None
     failure_id: str | None = None
 
     def _mark_complete(self):
@@ -137,6 +138,8 @@ class Track(Media):
                             "track",
                             self.failure_id or self.meta.info.id,
                         )
+                        if self.failure_callback is not None:
+                            self.failure_callback()
 
     async def postprocess(self):
         if self.is_single: remove_title(self.meta.title)
