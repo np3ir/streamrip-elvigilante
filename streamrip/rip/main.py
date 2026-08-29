@@ -1,9 +1,12 @@
 import asyncio
+import json
 import logging
 import os
 import platform
 import re
 import sys
+
+import aiofiles
 
 from .. import db
 from ..client import Client, DeezerClient, QobuzClient, SoundcloudClient, TidalClient
@@ -18,6 +21,7 @@ from ..media import (
     PendingSingle,
     remove_artwork_tempdirs,
 )
+from ..metadata import SearchResults
 from ..progress import clear_progress
 from .parse_url import parse_url
 from .prompter import get_prompter
@@ -142,16 +146,29 @@ class Main:
 
     async def add_by_id(self, source: str, media_type: str, id: str):
         client = await self.get_logged_in_client(source)
+        await self._queue_by_id(client, media_type, id)
+
+    async def add_all_by_id(self, info: list[tuple[str, str, str]]):
+        """Queue IDs while logging in to each source at most once."""
+
+        clients = {
+            source: await self.get_logged_in_client(source)
+            for source in dict.fromkeys(source for source, _, _ in info)
+        }
+        for source, media_type, item_id in info:
+            await self._queue_by_id(clients[source], media_type, item_id)
+
+    async def _queue_by_id(self, client: Client, media_type: str, item_id: str):
         if media_type == "track":
-            item = PendingSingle(id, client, self.config, self.database)
+            item = PendingSingle(item_id, client, self.config, self.database)
         elif media_type == "album":
-            item = PendingAlbum(id, client, self.config, self.database)
+            item = PendingAlbum(item_id, client, self.config, self.database)
         elif media_type == "playlist":
-            item = PendingPlaylist(id, client, self.config, self.database)
+            item = PendingPlaylist(item_id, client, self.config, self.database)
         elif media_type == "label":
-            item = PendingLabel(id, client, self.config, self.database)
+            item = PendingLabel(item_id, client, self.config, self.database)
         elif media_type == "artist":
-            item = PendingArtist(id, client, self.config, self.database)
+            item = PendingArtist(item_id, client, self.config, self.database)
         else:
             raise Exception(media_type)
         await self.queue.put(item)
@@ -181,6 +198,104 @@ class Main:
             console.print(f"[yellow]⚠ Skipped {self.skipped_items} item(s) due to metadata errors.[/yellow]")
 
         clear_progress()
+
+    async def search_interactive(self, source: str, media_type: str, query: str):
+        """Search and queue the items explicitly selected in a terminal menu."""
+
+        client = await self.get_logged_in_client(source)
+        limit = self.config.session.cli.max_search_results
+        with console.status(f"[bold]Searching {source}", spinner="dots"):
+            pages = await client.search(media_type, query, limit=limit)
+            if not pages:
+                console.print(f"[red]No search results found for query {query}")
+                return
+            results = SearchResults.from_pages(source, media_type, pages)
+
+        if not results.results:
+            console.print(f"[red]No search results found for query {query}")
+            return
+
+        if platform.system() == "Windows":
+            from pick import pick
+
+            selected = pick(
+                results.results,
+                title=(
+                    f"{source.capitalize()} {media_type} search.\n"
+                    "Press SPACE to select, RETURN to download, CTRL-C to exit."
+                ),
+                multiselect=True,
+                min_selection_count=1,
+            )
+            if not selected:
+                console.print("[yellow]No items chosen. Exiting.")
+                return
+            choices = [item for item, _ in selected]
+        else:
+            from simple_term_menu import TerminalMenu
+
+            menu = TerminalMenu(
+                results.summaries(),
+                preview_command=results.preview,
+                preview_size=0.5,
+                title=(
+                    f"Results for {media_type} '{query}' from {source.capitalize()}\n"
+                    "SPACE - select, ENTER - download, ESC - exit"
+                ),
+                cycle_cursor=True,
+                clear_screen=True,
+                multi_select=True,
+            )
+            chosen = menu.show()
+            if chosen is None:
+                console.print("[yellow]No items chosen. Exiting.")
+                return
+            choices = results.get_choices(chosen)
+
+        await self.add_all_by_id(
+            [(source, item.media_type(), item.id) for item in choices]
+        )
+
+    async def search_take_first(self, source: str, media_type: str, query: str):
+        """Queue only the first normalized search result."""
+
+        client = await self.get_logged_in_client(source)
+        with console.status(f"[bold]Searching {source}", spinner="dots"):
+            pages = await client.search(media_type, query, limit=1)
+        if not pages:
+            console.print(f"[red]No search results found for query {query}")
+            return
+
+        results = SearchResults.from_pages(source, media_type, pages)
+        if not results.results:
+            console.print(f"[red]No search results found for query {query}")
+            return
+        first = results.results[0]
+        await self.add_by_id(source, first.media_type(), first.id)
+
+    async def search_output_file(
+        self, source: str, media_type: str, query: str, filepath: str, limit: int
+    ):
+        """Write normalized search results as an importable JSON list."""
+
+        client = await self.get_logged_in_client(source)
+        with console.status(f"[bold]Searching {source}", spinner="dots"):
+            pages = await client.search(media_type, query, limit=limit)
+        if not pages:
+            console.print(f"[red]No search results found for query {query}")
+            return
+
+        results = SearchResults.from_pages(source, media_type, pages)
+        if not results.results:
+            console.print(f"[red]No search results found for query {query}")
+            return
+        contents = json.dumps(results.as_list(source), indent=4, ensure_ascii=False)
+        async with aiofiles.open(filepath, "w", encoding="utf-8") as output:
+            await output.write(contents)
+        console.print(
+            f"Wrote [purple]{len(results.results)}[/purple] results to "
+            f"[cyan]{filepath}[/cyan] as JSON!"
+        )
 
     async def worker_loop(self, worker_id: int):
         while True:
