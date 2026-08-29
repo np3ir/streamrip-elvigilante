@@ -3,9 +3,77 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 from ..client import DeezerClient, QobuzClient
 from ..config import Config
+
+
+class BrowserLoginUnavailableError(RuntimeError):
+    """Raised when the optional embedded-browser runtime is unavailable."""
+
+
+class BrowserLoginCancelledError(RuntimeError):
+    """Raised when the login window closes before an ARL cookie is available."""
+
+
+def _extract_arl_cookie(cookies: Any) -> str | None:
+    """Extract an ARL from pywebview cookie representations."""
+
+    if isinstance(cookies, dict):
+        value = cookies.get("arl")
+        if hasattr(value, "value"):
+            value = value.value
+        return str(value).strip() if value else None
+
+    for cookie in cookies or ():
+        if hasattr(cookie, "items"):
+            for name, morsel in cookie.items():
+                if name == "arl" and getattr(morsel, "value", None):
+                    return str(morsel.value).strip()
+        name = getattr(cookie, "key", None) or getattr(cookie, "name", None)
+        if name != "arl":
+            continue
+        value = getattr(cookie, "value", None)
+        if value is None and isinstance(cookie, dict):
+            value = cookie.get("value")
+        if value:
+            return str(value).strip()
+    return None
+
+
+def capture_deezer_arl(webview_module=None) -> str:
+    """Open Deezer in an isolated WebView2 window and capture its ARL cookie."""
+
+    if webview_module is None:
+        try:
+            import webview as webview_module
+        except ImportError:
+            raise BrowserLoginUnavailableError(
+                "Install the 'browser-login' extra or use --arl."
+            ) from None
+
+    captured: list[str] = []
+    window = webview_module.create_window(
+        "Streamrip — Deezer login",
+        "https://www.deezer.com/login",
+        width=980,
+        height=720,
+    )
+
+    def inspect_cookies(*_args):
+        arl = _extract_arl_cookie(window.get_cookies())
+        if arl:
+            captured.append(arl)
+            window.destroy()
+
+    window.events.loaded += inspect_cookies
+    webview_module.start(gui="edgechromium", private_mode=True)
+    if not captured:
+        raise BrowserLoginCancelledError(
+            "Deezer login was cancelled before completion."
+        )
+    return captured[0]
 
 
 async def authenticate_qobuz(

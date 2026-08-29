@@ -353,18 +353,39 @@ async def login_qobuz(ctx, use_auth_token):
 
 
 @login_group.command("deezer")
+@click.option(
+    "--arl",
+    "manual_arl",
+    is_flag=True,
+    help="Enter an ARL manually instead of opening the assisted browser login.",
+)
 @click.pass_context
 @coro
-async def login_deezer(ctx):
-    """Log in to Deezer with a manually supplied ARL."""
+async def login_deezer(ctx, manual_arl):
+    """Log in to Deezer using a browser or a manually supplied ARL."""
 
-    from .login import authenticate_deezer
+    from .login import (
+        BrowserLoginCancelledError,
+        BrowserLoginUnavailableError,
+        authenticate_deezer,
+        capture_deezer_arl,
+    )
 
     cfg: Config | None = ctx.obj["config"]
     if cfg is None:
         return
 
-    arl = click.prompt("Deezer ARL", hide_input=True)
+    if manual_arl:
+        arl = click.prompt("Deezer ARL", hide_input=True)
+    else:
+        console.print(
+            "Opening a private Deezer login window. Streamrip will store only "
+            "the resulting session cookie."
+        )
+        try:
+            arl = capture_deezer_arl()
+        except (BrowserLoginUnavailableError, BrowserLoginCancelledError) as error:
+            raise click.ClickException(str(error)) from None
     try:
         with cfg:
             user = await authenticate_deezer(cfg, arl)

@@ -6,6 +6,8 @@ from click.testing import CliRunner
 from streamrip.config import Config
 from streamrip.rip.cli import rip
 from streamrip.rip.login import (
+    BrowserLoginCancelledError,
+    _extract_arl_cookie,
     authenticate_deezer,
     authenticate_qobuz,
     configured_services,
@@ -64,6 +66,51 @@ def test_status_reports_presence_without_secret_values():
         "deezer": True,
         "tidal": bool(config.file.tidal.access_token),
     }
+
+
+def test_extracts_arl_from_supported_cookie_shapes():
+    from http.cookies import SimpleCookie
+
+    class Cookie:
+        key = "arl"
+        value = "private-cookie"
+
+    simple_cookie = SimpleCookie()
+    simple_cookie["arl"] = "private-cookie"
+    assert _extract_arl_cookie([Cookie()]) == "private-cookie"
+    assert _extract_arl_cookie([simple_cookie]) == "private-cookie"
+    assert _extract_arl_cookie({"arl": "private-cookie"}) == "private-cookie"
+    assert _extract_arl_cookie([]) is None
+
+
+def test_browser_login_closing_without_cookie_is_cancelled():
+    class Events:
+        class Loaded:
+            def __iadd__(self, callback):
+                self.callback = callback
+                return self
+
+        loaded = Loaded()
+
+    class Window:
+        events = Events()
+
+        def get_cookies(self):
+            return []
+
+    class Webview:
+        @staticmethod
+        def create_window(*_args, **_kwargs):
+            return Window()
+
+        @staticmethod
+        def start(**_kwargs):
+            return None
+
+    from streamrip.rip.login import capture_deezer_arl
+
+    with pytest.raises(BrowserLoginCancelledError):
+        capture_deezer_arl(Webview)
 
 
 def test_logout_removes_user_secret_but_keeps_qobuz_app_metadata():
