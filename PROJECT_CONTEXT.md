@@ -129,7 +129,7 @@ Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 Latest full run after the explicit login-command foundation:
 
-- `161 passed`
+- `163 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - `0` runtime warnings in the final suite summary
 - Ruff clean on all modified/new files. A separate whole-repository Ruff run reports one pre-existing `RUF036` ordering issue in `streamrip/media/semaphore.py:10`; it is unrelated to the current comparison change.
@@ -145,7 +145,7 @@ Commands:
 ## Next work
 
 1. Remove the two exact temporary live-validation directories after user confirmation or through an allowed safe cleanup mechanism; both paths are listed below.
-2. Add Deezer browser-assisted login (WebView2 on Windows) while retaining the validated hidden manual-ARL path.
+2. Perform one user-observed Deezer browser-login validation; the automated cookie extraction and local WebView2 engine probe already pass. Do not print or record the captured ARL.
 3. Investigate and restore the broken standalone `rip search` CLI paths: both interactive and output-file modes currently call missing `Main` methods. This is separate from `rip compare`, which works.
 3. Decide whether to prepare a side-by-side 2.2.8 installation without replacing global `rip 2.1.0`.
 
@@ -261,16 +261,29 @@ Committed as `3d0d832 feat: search cross-service tracks by isrc` (local only; no
 
 ## Explicit service-login foundation
 
-Current uncommitted implementation in `streamrip/rip/login.py`, `streamrip/rip/cli.py`, `streamrip/client/qobuz.py`, and `tests/test_login.py`:
+Committed as `72f1df0 feat: add secure service login commands` with documentation checkpoint `24d91d3 docs: record service login foundation` (local only; not pushed).
 
 - New `rip login` command group with `qobuz`, `deezer`, `status`, and `logout` commands.
 - Qobuz supports hidden email/password input or `--token` user-ID/token input. After a successful email/password exchange, only the returned user ID and `user_auth_token` are persisted; neither the clear password nor its MD5 is written to disk.
 - Qobuz app ID and reusable app-secret candidates remain automatically discovered through the existing web-player extraction path. Manual token login remains available, matching QobuzDownloaderX's two login modes.
 - Removed Qobuz credential values and full login responses from debug logs and authentication exceptions.
-- Deezer manual ARL entry is hidden and validated before replacing the credential stored on disk. Browser-assisted login remains the next phase; manual ARL must remain as a fallback.
+- Deezer manual ARL entry is hidden and validated before replacing the credential stored on disk. Manual ARL remains a supported fallback.
 - `rip login status` reports only whether TIDAL/Qobuz/Deezer are configured. `rip login logout SERVICE` removes the selected user credential while preserving reusable Qobuz app metadata.
 - Real command-object validation shows all three current services as configured without printing credential values. No login, logout, download, or user-config mutation was performed by that status check.
 - Validation: login tests `5 passed`; Ruff clean on all changed code/tests; full suite `161 passed, 7 skipped`.
+
+## Deezer browser-assisted login
+
+Current uncommitted implementation in `pyproject.toml`, `poetry.lock`, `streamrip/rip/login.py`, `streamrip/rip/cli.py`, and `tests/test_login.py`:
+
+- `rip login deezer` now defaults to an isolated Deezer login window backed by WebView2. After the user completes Deezer's own login, Streamrip reads only the resulting `arl` cookie, closes the window, validates it through the existing client, and persists it only after successful validation.
+- `rip login deezer --arl` retains hidden manual entry as an explicit fallback.
+- pywebview is a Windows-only optional dependency exposed through the `browser-login` Poetry extra, so headless and non-Windows installations do not acquire GUI dependencies.
+- The browser uses private mode, so its temporary profile is discarded. No email/password fields are implemented or intercepted by Streamrip.
+- Cookie extraction covers pywebview's mapping, attribute, and `SimpleCookie` representations. Closing the window before authentication produces a controlled cancellation error.
+- pywebview 6.2.1 was installed only in the isolated development environment. A real local WebView2 engine probe opened and automatically closed a private test page successfully; it did not visit Deezer or alter any service session.
+- Installing Poetry temporarily upgraded `tomlkit`; the development environment was immediately restored to the project-compatible `tomlkit 0.7.2` before tests. Poetry remains installed as a development tool but is not a product dependency.
+- Validation: login tests `7 passed`; Ruff clean on changed code/tests; full suite `163 passed, 7 skipped`; `git diff --check` clean except Windows line-ending notices.
 
 ## Safety and decision constraints
 
@@ -282,6 +295,6 @@ Current uncommitted implementation in `streamrip/rip/login.py`, `streamrip/rip/c
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, and ISRC-first comparison in `3d0d832`. The explicit-login implementation, tests, and this accumulated memory update are modified but not yet committed.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, ISRC-first comparison in `3d0d832`, and explicit service-login commands in `72f1df0`. Browser-assisted Deezer login, its optional dependency lock update, tests, and this memory update are modified but not yet committed.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
