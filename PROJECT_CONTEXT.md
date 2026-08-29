@@ -145,8 +145,7 @@ Commands:
 ## Next work
 
 1. Remove the two exact temporary live-validation directories after user confirmation or through an allowed safe cleanup mechanism; both paths are listed below.
-2. Perform one user-observed Deezer browser-login validation; the automated cookie extraction and local WebView2 engine probe already pass. Do not print or record the captured ARL.
-3. Investigate and restore the broken standalone `rip search` CLI paths: both interactive and output-file modes currently call missing `Main` methods. This is separate from `rip compare`, which works.
+2. Investigate and restore the broken standalone `rip search` CLI paths: both interactive and output-file modes currently call missing `Main` methods. This is separate from `rip compare`, which works.
 3. Decide whether to prepare a side-by-side 2.2.8 installation without replacing global `rip 2.1.0`.
 
 ## Committed opt-in best-source download
@@ -282,6 +281,8 @@ Current uncommitted implementation in `pyproject.toml`, `poetry.lock`, `streamri
 - The browser uses private mode, so its temporary profile is discarded. No email/password fields are implemented or intercepted by Streamrip.
 - Cookie extraction covers pywebview's mapping, attribute, and `SimpleCookie` representations. Closing the window before authentication produces a controlled cancellation error.
 - pywebview 6.2.1 was installed only in the isolated development environment. A real local WebView2 engine probe opened and automatically closed a private test page successfully; it did not visit Deezer or alter any service session.
+- User-observed live validation then succeeded end to end: `rip login deezer` opened Deezer, the user logged in directly with the Deezer password in the private window, Streamrip captured the cookie without displaying it, closed the window automatically, validated the account, and saved the replacement session. Google federated login was rejected inside the embedded browser, but direct Deezer password login succeeded. No ARL, email, Google credential, or password is recorded here.
+- A follow-up preview-only `rip compare tidal 524417109` succeeded with the newly captured Deezer session and no credential error or media download. Deezer and Qobuz still had no equivalent catalog match; TIDAL remained the sole candidate and winner at FLAC/lossless/24-bit/44.1 kHz.
 - Installing Poetry temporarily upgraded `tomlkit`; the development environment was immediately restored to the project-compatible `tomlkit 0.7.2` before tests. Poetry remains installed as a development tool but is not a product dependency.
 - Validation: login tests `7 passed`; Ruff clean on changed code/tests; full suite `163 passed, 7 skipped`; `git diff --check` clean except Windows line-ending notices.
 
