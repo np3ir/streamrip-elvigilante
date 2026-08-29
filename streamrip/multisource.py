@@ -76,12 +76,14 @@ class QualityCeiling:
 
     bit_depth: int | None = None
     sample_rate_hz: int | None = None
+    prefer_lossless: bool = True
+    fallback_to_lossy: bool = True
 
     def allows(self, quality: AudioQuality) -> bool:
         # PCM bit depth/sample rate do not describe lossy codecs consistently;
         # lossy delivery remains the final fallback below lossless candidates.
         if not quality.lossless:
-            return True
+            return self.fallback_to_lossy
         if self.bit_depth is not None:
             if quality.bit_depth is None or quality.bit_depth > self.bit_depth:
                 return False
@@ -147,4 +149,19 @@ def choose_best(
     )
     if not eligible:
         raise ValueError("No candidate satisfies the requested quality ceiling")
-    return max(eligible, key=lambda item: (item.quality.rank, item.identity.source))
+    def selection_rank(item: ServiceCandidate):
+        quality = item.quality
+        if ceiling is None or ceiling.prefer_lossless:
+            rank = quality.rank
+        else:
+            rank = (
+                quality.bit_depth or 0,
+                quality.sample_rate_hz or 0,
+                quality.bitrate_kbps or 0,
+                quality.channels or 0,
+                int(quality.spatial),
+                int(quality.lossless),
+            )
+        return rank, item.identity.source
+
+    return max(eligible, key=selection_rank)

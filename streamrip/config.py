@@ -92,6 +92,14 @@ class ConversionConfig:
 
 
 @dataclass(slots=True)
+class ComparisonConfig:
+    max_bit_depth: int = 0
+    max_sample_rate: float = 0.0
+    prefer_lossless: bool = True
+    fallback_to_lossy: bool = True
+
+
+@dataclass(slots=True)
 class QobuzDiscographyFilterConfig:
     extras: bool
     repeats: bool
@@ -209,6 +217,7 @@ class ConfigData:
     cli: CliConfig
     database: DatabaseConfig
     conversion: ConversionConfig
+    comparison: ComparisonConfig
 
     misc: MiscConfig
 
@@ -282,6 +291,12 @@ class ConfigData:
         cli = CliConfig(**toml["cli"])  # type: ignore
         database = DatabaseConfig(**toml["database"])  # type: ignore
         conversion = ConversionConfig(**toml["conversion"])  # type: ignore
+        comparison_raw = toml.get("comparison") or {}
+        comparison = ComparisonConfig(**dict(comparison_raw))  # type: ignore
+        if comparison.max_bit_depth < 0:
+            comparison.max_bit_depth = 0
+        if comparison.max_sample_rate < 0:
+            comparison.max_sample_rate = 0.0
         misc = MiscConfig(**toml["misc"])  # type: ignore
 
         return cls(
@@ -301,6 +316,7 @@ class ConfigData:
             cli=cli,
             database=database,
             conversion=conversion,
+            comparison=comparison,
             misc=misc,
         )
 
@@ -334,6 +350,9 @@ class ConfigData:
         update_toml_section_from_config(self.toml["cli"], self.cli)
         update_toml_section_from_config(self.toml["database"], self.database)
         update_toml_section_from_config(self.toml["conversion"], self.conversion)
+        if "comparison" not in self.toml:
+            self.toml["comparison"] = {}
+        update_toml_section_from_config(self.toml["comparison"], self.comparison)
 
     def get_source(
         self,

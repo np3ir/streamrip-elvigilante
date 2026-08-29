@@ -105,6 +105,23 @@ def test_ceiling_falls_back_to_lossy_when_lossless_delivery_is_too_high():
     assert choose_best([hires, aac], QualityCeiling(bit_depth=16)) is aac
 
 
+def test_ceiling_can_forbid_lossy_fallback():
+    hires = candidate(
+        "qobuz",
+        AudioQuality(codec="flac", lossless=True, bit_depth=24, sample_rate_hz=96000),
+    )
+    aac = candidate(
+        "tidal",
+        AudioQuality(codec="aac", lossless=False, bitrate_kbps=320),
+    )
+
+    with pytest.raises(ValueError, match="quality ceiling"):
+        choose_best(
+            [hires, aac],
+            QualityCeiling(bit_depth=16, fallback_to_lossy=False),
+        )
+
+
 def test_sample_rate_ceiling_excludes_unknown_and_above_ceiling_lossless():
     unknown = candidate("tidal", AudioQuality(codec="flac", lossless=True))
     high_rate = candidate(

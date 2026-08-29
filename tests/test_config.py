@@ -7,6 +7,7 @@ import tomlkit
 from streamrip.config import (
     ArtworkConfig,
     CliConfig,
+    ComparisonConfig,
     Config,
     ConfigData,
     ConversionConfig,
@@ -262,6 +263,7 @@ def test_sample_config_data_fields(sample_config_data):
             bit_depth=24,
             lossy_bitrate=320,
         ),
+        comparison=ComparisonConfig(),
         misc=MiscConfig(version="2.0", check_for_updates=True),
         lyrics=LyricsConfig(),
         _modified=False,
@@ -279,6 +281,25 @@ def test_sample_config_data_fields(sample_config_data):
     assert sample_config_data.qobuz_filters == test_config.qobuz_filters
     assert sample_config_data.database == test_config.database
     assert sample_config_data.conversion == test_config.conversion
+    assert sample_config_data.comparison == ComparisonConfig()
+
+
+def test_comparison_policy_backfills_and_persists(tmp_path):
+    config_path = tmp_path / "config.toml"
+    shutil.copy(SAMPLE_CONFIG, config_path)
+    config = Config(os.fspath(config_path))
+
+    assert config.session.comparison == ComparisonConfig()
+    config.file.comparison.max_bit_depth = 16
+    config.file.comparison.max_sample_rate = 44.1
+    config.file.comparison.fallback_to_lossy = False
+    config.file.set_modified()
+    config.save_file()
+
+    reloaded = Config(os.fspath(config_path))
+    assert reloaded.session.comparison.max_bit_depth == 16
+    assert reloaded.session.comparison.max_sample_rate == 44.1
+    assert reloaded.session.comparison.fallback_to_lossy is False
 
 
 def test_config_update_on_save():
