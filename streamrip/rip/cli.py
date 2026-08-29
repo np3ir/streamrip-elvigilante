@@ -310,6 +310,108 @@ def config_path(ctx):
     console.print(f"Config path: [bold cyan]'{config_path}'")
 
 
+@rip.group("login")
+def login_group():
+    """Manage private service sessions."""
+
+
+@login_group.command("qobuz")
+@click.option(
+    "--token",
+    "use_auth_token",
+    is_flag=True,
+    help="Use a Qobuz user ID and auth token instead of email and password.",
+)
+@click.pass_context
+@coro
+async def login_qobuz(ctx, use_auth_token):
+    """Log in to Qobuz and store only the resulting auth token."""
+
+    from .login import authenticate_qobuz
+
+    cfg: Config | None = ctx.obj["config"]
+    if cfg is None:
+        return
+
+    identity = click.prompt("Qobuz user ID" if use_auth_token else "Qobuz email")
+    credential = click.prompt(
+        "Qobuz auth token" if use_auth_token else "Qobuz password",
+        hide_input=True,
+    )
+    try:
+        with cfg:
+            user_id = await authenticate_qobuz(
+                cfg,
+                identity,
+                credential,
+                use_auth_token=use_auth_token,
+            )
+    except Exception:
+        raise click.ClickException("Qobuz authentication failed.") from None
+
+    console.print(f"[green]Qobuz login validated for user {user_id}.[/green]")
+
+
+@login_group.command("deezer")
+@click.pass_context
+@coro
+async def login_deezer(ctx):
+    """Log in to Deezer with a manually supplied ARL."""
+
+    from .login import authenticate_deezer
+
+    cfg: Config | None = ctx.obj["config"]
+    if cfg is None:
+        return
+
+    arl = click.prompt("Deezer ARL", hide_input=True)
+    try:
+        with cfg:
+            user = await authenticate_deezer(cfg, arl)
+    except Exception:
+        raise click.ClickException("Deezer authentication failed.") from None
+
+    console.print(f"[green]Deezer login validated for {user}.[/green]")
+
+
+@login_group.command("status")
+@click.pass_context
+def login_status(ctx):
+    """Show configured sessions without contacting a service."""
+
+    from .login import configured_services
+
+    cfg: Config | None = ctx.obj["config"]
+    if cfg is None:
+        return
+    for service, configured in configured_services(cfg).items():
+        state = "configured" if configured else "not configured"
+        console.print(f"{service}: {state}")
+
+
+@login_group.command("logout")
+@click.argument(
+    "service",
+    type=click.Choice(["qobuz", "deezer"], case_sensitive=False),
+)
+@click.option("-y", "--yes", is_flag=True, help="Do not ask for confirmation.")
+@click.pass_context
+def login_logout(ctx, service, yes):
+    """Remove locally stored credentials for one service."""
+
+    from .login import logout_service
+
+    cfg: Config | None = ctx.obj["config"]
+    if cfg is None:
+        return
+    if not yes and not Confirm.ask(f"Remove the stored {service} session?"):
+        console.print("Logout aborted")
+        return
+    with cfg:
+        logout_service(cfg, service)
+    console.print(f"[green]Removed the stored {service} session.[/green]")
+
+
 @rip.group()
 def database():
     """View and modify the downloads and failed downloads databases."""

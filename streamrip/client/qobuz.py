@@ -151,6 +151,8 @@ class QobuzClient(Client):
         rpm = config.session.downloads.requests_per_minute
         self.rate_limiter = self.get_rate_limiter(rpm if rpm > 0 else 60)
         self.secret: Optional[str] = None
+        self.user_id: str | None = None
+        self.user_auth_token: str | None = None
 
     async def login(self):
         self.session = await self.get_session(
@@ -192,14 +194,17 @@ class QobuzClient(Client):
                 "app_id": str(c.app_id),
             }
 
-        logger.debug("Request params %s", params)
+        logger.debug(
+            "Requesting Qobuz login with %s credentials",
+            "token" if c.use_auth_token else "email",
+        )
         status, resp = await self._api_request("user/login", params)
-        logger.debug("Login resp: %s", resp)
+        logger.debug("Qobuz login response status: %s", status)
 
         if status == 401:
-            raise AuthenticationError(f"Invalid credentials from params {params}")
+            raise AuthenticationError("Invalid Qobuz credentials")
         elif status == 400:
-            raise InvalidAppIdError(f"Invalid app id from params {params}")
+            raise InvalidAppIdError("Invalid Qobuz app id")
 
         logger.debug("Logged in to Qobuz")
 
@@ -208,6 +213,8 @@ class QobuzClient(Client):
 
         uat = resp["user_auth_token"]
         self.session.headers.update({"X-User-Auth-Token": uat})
+        self.user_id = str(resp["user"]["id"])
+        self.user_auth_token = uat
 
         self.secret = await self._get_valid_secret(c.secrets)
 
