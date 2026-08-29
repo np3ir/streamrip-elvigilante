@@ -159,6 +159,30 @@ rip -q 2 url "https://www.deezer.com/album/456789"
 rip -c MP3 url "https://tidal.com/browse/track/99999"
 ```
 
+### `rip library`
+
+Build a resumable cross-service library plan from a track, album, playlist,
+artist or mix URL. Planning is the default; media transfer requires the explicit
+`--download` switch.
+
+```bash
+# Playlist recordings, deduplicated by ISRC
+rip library --tracks --dry-run --max-tracks 100 PLAYLIST_URL
+
+# Complete albums referenced by a playlist
+rip library --albums --resume --max-tracks 500 PLAYLIST_URL
+
+# Complete discographies of every credited playlist artist
+rip library --artists --resume --max-tracks 500 PLAYLIST_URL
+
+# Continue the identical plan and download its selected recordings
+rip library --tracks --download --resume PLAYLIST_URL
+```
+
+The checkpoint signature includes the URL, expansion mode, quality ceiling,
+lossless policy and service priority. Changing any of those settings creates a
+separate job. `--max-tracks 0` means unlimited.
+
 **Supported URL types:**
 
 | Source | Types |

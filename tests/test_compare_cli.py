@@ -22,6 +22,17 @@ def test_compare_command_is_registered_with_safe_preview_help():
     ]
 
 
+def test_library_command_registers_mass_processing_safety_options():
+    command = rip.commands["library"]
+    names = [parameter.name for parameter in command.params]
+
+    assert command is not None
+    assert "expansion" in names
+    assert "dry_run" in names
+    assert "resume" in names
+    assert "max_tracks" in names
+
+
 def test_help_invocation_is_detected_before_config_loading():
     assert _is_help_invocation(["compare", "--help"]) is True
     assert _is_help_invocation(["compare", "tidal", "123"]) is False

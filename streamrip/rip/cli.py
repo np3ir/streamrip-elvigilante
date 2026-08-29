@@ -876,6 +876,225 @@ async def id(ctx, source, media_type, id):
             await main.rip()
 
 
+@rip.command("library")
+@click.option("--tracks", "expansion", flag_value="tracks", default=True,
+              help="Process playlist entries as standalone recordings.")
+@click.option("--albums", "expansion", flag_value="albums",
+              help="Expand playlist entries into their complete albums.")
+@click.option("--artists", "expansion", flag_value="artists",
+              help="Expand playlist credits into complete artist discographies.")
+@click.option("--dry-run/--download", default=True,
+              help="Plan only, or explicitly download the selected recordings.")
+@click.option("--resume/--no-resume", default=False,
+              help="Skip track keys completed by the same URL and policy.")
+@click.option("--max-tracks", type=click.IntRange(min=0), default=0,
+              help="Stop after this many new tracks; zero means unlimited.")
+@click.option(
+    "--priority", "service_priority", multiple=True,
+    type=click.Choice(["tidal", "qobuz", "deezer"], case_sensitive=False),
+    help="Tie-break service order; repeat from highest to lowest priority.",
+)
+@click.option(
+    "--max-bit-depth", type=click.IntRange(min=1, max=64),
+    help="Maximum lossless bit depth for this job.",
+)
+@click.option(
+    "--max-sample-rate", type=click.FloatRange(min=1),
+    help="Maximum sample rate in kHz for this job.",
+)
+@click.argument("url")
+@click.pass_context
+@coro
+async def library(
+    ctx,
+    expansion,
+    dry_run,
+    resume,
+    max_tracks,
+    service_priority,
+    max_bit_depth,
+    max_sample_rate,
+    url,
+):
+    """Build a resumable best-quality library plan from a service URL."""
+
+    from ..comparison import MultiSourceComparator, service_quality_for_ceiling
+    from ..library import (
+        LibraryCheckpoint,
+        iter_library_tracks,
+        library_job_signature,
+    )
+    from ..multisource import QualityCeiling, normalize_sample_rate
+    from .parse_url import GenericURL, parse_url
+
+    parsed = parse_url(url)
+    if not isinstance(parsed, GenericURL):
+        raise click.UsageError("Provide a standard Tidal, Qobuz, or Deezer URL.")
+    source, media_type, item_id = parsed.match.groups()
+    if media_type == "mix":
+        media_type = "mix"
+    if media_type not in {"track", "album", "playlist", "artist", "mix"}:
+        raise click.UsageError(f"Unsupported library URL type: {media_type}")
+
+    with ctx.obj["config"] as cfg:
+        policy = cfg.session.comparison
+        bit_depth = max_bit_depth if max_bit_depth is not None else (
+            policy.max_bit_depth or None
+        )
+        sample_rate = max_sample_rate if max_sample_rate is not None else (
+            policy.max_sample_rate or None
+        )
+        ceiling = QualityCeiling(
+            bit_depth=bit_depth,
+            sample_rate_hz=normalize_sample_rate(sample_rate),
+            prefer_lossless=policy.prefer_lossless,
+            fallback_to_lossy=policy.fallback_to_lossy,
+        )
+        priority = tuple(
+            dict.fromkeys((*service_priority, *policy.service_priority))
+        )
+        signature = library_job_signature(
+            {
+                "url": url.strip(),
+                "expansion": expansion,
+                "download": not dry_run,
+                "bit_depth": bit_depth,
+                "sample_rate": sample_rate,
+                "prefer_lossless": ceiling.prefer_lossless,
+                "fallback_to_lossy": ceiling.fallback_to_lossy,
+                "priority": priority,
+            }
+        )
+        checkpoint = LibraryCheckpoint(signature).load()
+        if resume and checkpoint.completed:
+            console.print(
+                f"[dim]Resume checkpoint: {len(checkpoint.completed)} completed key(s).[/dim]"
+            )
+
+        async with Main(cfg) as main:
+            reference_client = await main.get_logged_in_client(source)
+            clients = {source: reference_client}
+            unavailable = {}
+            for service in ("tidal", "deezer", "qobuz"):
+                if service == source:
+                    continue
+                try:
+                    clients[service] = await main.get_logged_in_client(
+                        service, prompt_on_missing=False
+                    )
+                except Exception as error:
+                    unavailable[service] = f"{type(error).__name__}: {error}"
+
+            qualities = {
+                service: service_quality_for_ceiling(
+                    service,
+                    cfg.session.get_source(service).quality,
+                    ceiling,
+                )
+                for service in clients
+            }
+            comparator = MultiSourceComparator(
+                clients, service_priority=priority
+            )
+            reference_quality = qualities[source]
+            processed = 0
+            attempted = 0
+            skipped_resume = 0
+            skipped_duplicate = 0
+            failed = 0
+            winners: dict[str, int] = {}
+            seen: set[str] = set()
+            queued = []
+            completed_after_download = []
+
+            console.print(
+                f"[bold cyan]Library job[/bold cyan] — {media_type} → {expansion}; "
+                f"mode={'preview' if dry_run else 'download'}; signature={signature}"
+            )
+            async for track in iter_library_tracks(
+                reference_client, media_type, item_id, expansion
+            ):
+                key = track.job_key(expansion)
+                if key in seen:
+                    skipped_duplicate += 1
+                    continue
+                seen.add(key)
+                if resume and checkpoint.is_done(key):
+                    skipped_resume += 1
+                    continue
+                if max_tracks and attempted >= max_tracks:
+                    break
+                attempted += 1
+                try:
+                    reference = await reference_client.get_candidate(
+                        track.source_id, reference_quality
+                    )
+                    report = await comparator.compare(
+                        reference.identity,
+                        qualities,
+                        reference_candidate=reference,
+                        ceiling=ceiling,
+                    )
+                except Exception as error:
+                    failed += 1
+                    console.print(
+                        f"[red]FAILED[/red] {track.artist} — {track.title}: "
+                        f"{type(error).__name__}: {error}"
+                    )
+                    continue
+                processed += 1
+                selected = report.selected
+                if selected is None:
+                    failed += 1
+                    console.print(
+                        f"[{processed}] [yellow]NO MATCH[/yellow] "
+                        f"{track.artist} — {track.title}"
+                    )
+                    continue
+                winner = selected.identity.source
+                winners[winner] = winners.get(winner, 0) + 1
+                quality = selected.quality
+                quality_text = "/".join(
+                    part for part in (
+                        quality.codec.upper(),
+                        f"{quality.bit_depth}-bit" if quality.bit_depth else "",
+                        f"{quality.sample_rate_hz / 1000:g}kHz"
+                        if quality.sample_rate_hz else "",
+                    ) if part
+                )
+                console.print(
+                    f"[{processed}] {winner}: {quality_text} — "
+                    f"{track.artist} — {track.title}"
+                )
+                if dry_run:
+                    checkpoint.mark_done(key)
+                else:
+                    queued.append(selected)
+                    completed_after_download.append(key)
+
+            if queued:
+                for selected in queued:
+                    await main.add_by_id(
+                        selected.identity.source,
+                        "track",
+                        selected.identity.source_id,
+                    )
+                await main.rip()
+                for key in completed_after_download:
+                    checkpoint.mark_done(key)
+
+            summary = ", ".join(
+                f"{service}: {count}" for service, count in winners.items()
+            ) or "none"
+            console.print(
+                f"\n[bold green]Library summary:[/bold green] processed={processed}, "
+                f"attempted={attempted}, winners=({summary}), failed={failed}, "
+                f"duplicates={skipped_duplicate}, resume-skipped={skipped_resume}"
+            )
+            for service, error in unavailable.items():
+                console.print(f"[yellow]{service} unavailable:[/yellow] {error}")
+
+
 
 async def latest_streamrip_version(verify_ssl: bool = True) -> tuple[str, str | None]:
     """Get the latest streamrip-elvigilante version from the fork's GitHub releases.

@@ -396,6 +396,21 @@ Committed as `2fda1e0 feat: add assisted deezer browser login`, with documentati
 - Preserve existing Deezer and Qobuz behavior; changes require regression tests.
 - Treat advertised quality as a hint. Selection must ultimately rely on the delivered manifest/file properties.
 
+## Resumable mass-library planner
+
+Implemented on 2026-08-28 after auditing `../tiddl-elvigilante` link-processing behavior; pending local checkpoint commit at the time of this memory update.
+
+- New `rip library URL` command accepts standard TIDAL, Qobuz, or Deezer track, album, playlist, artist, and mix links.
+- Playlist expansion modes mirror tiddl-elvigilante: `--tracks`, `--albums`, and `--artists`. Track mode deduplicates by normalized ISRC. Album/artist modes retain album-specific track keys so complete albums are not made incomplete by cross-album recording deduplication.
+- `--dry-run` is the safe default; actual transfer requires explicit `--download`. `--max-tracks N` limits attempted new tracks, including failures. `--resume` skips successful keys from the identical job before comparison.
+- Checkpoints live privately under Streamrip's app-data `library-resume` directory. Their signature includes URL, expansion mode, preview/download mode, quality ceilings, lossless/fallback policy, and service priority. Writes use a same-directory temporary followed by atomic replace. Checkpoints contain only job signature and completed track keys, never credentials.
+- Expansion is streamed rather than pre-creating thousands of asyncio tasks. Playlist albums, credited artists, artist albums, and shared albums are de-duplicated before repeated catalog requests where possible.
+- Each yielded recording reuses the existing exact-ISRC multi-source comparator, delivered-quality ceiling, and configurable service tie-break. CLI output is one concise line per recording plus aggregate winner/failure/duplicate/resume counts rather than a full Rich table per service.
+- Current download execution queues selected winning service tracks through Streamrip's existing pipeline after the bounded planning chunk. A future phase must add canonical reference-album metadata overrides so mixed-service winners are always filed and tagged using the requested library edition rather than each winning service's edition.
+- Real preview validation against TIDAL playlist `cd353f9c-d621-44b9-aa6e-a0497541d908` used `--max-tracks 1` only. Track mode selected Deezer FLAC 16/44.1 for the first recording; a second identical `--resume` run skipped it and selected Qobuz FLAC 16/44.1 for the next recording. Album mode successfully expanded and selected Deezer FLAC 16/44.1 for its first track. Artist mode expanded the first credited artist discography and selected Deezer FLAC 16/44.1 for its first track. No media was downloaded.
+- The earlier metadata-only inventory measured 2,488 playlist entries, all with ISRC, 2,066 referenced albums, 1,110 primary artists, and 41 duplicate TIDAL track IDs.
+- Validation: focused library/CLI tests `12 passed` after the shared-album regression; full suite `191 passed, 7 skipped`; Ruff clean on changed files; `git diff --check` clean except informational Windows line-ending notices.
+
 ## Working tree expected at this handoff
 
 The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, ISRC-first comparison in `3d0d832`, explicit service-login commands in `72f1df0`, browser-assisted Deezer login in `2fda1e0`, restored standalone search in `73dbc30`, best-edition selection in `0b690b9`, hybrid TIDAL plus quality ceilings in `db3fbfd`, and persistent comparison policy in `9bbdb8a`. Collection/direct-URL comparison is implemented and pending its local checkpoint commit. No push occurred.
