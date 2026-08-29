@@ -148,6 +148,71 @@ async def test_reference_candidate_prevents_duplicate_manifest_request():
 
 
 @pytest.mark.asyncio
+async def test_selects_best_matching_edition_within_reference_service():
+    seed = candidate("qobuz", "q1", 24, 44100)
+    better = candidate("qobuz", "q2", 24, 88200)
+
+    class EditionsClient(FakeClient):
+        async def get_candidate(self, source_id, quality):
+            assert quality == 4
+            return {"q1": seed, "q2": better}[source_id]
+
+    qobuz = EditionsClient(
+        "qobuz",
+        seed,
+        [
+            {
+                "tracks": {
+                    "items": [
+                        search_page("qobuz", "q1")["tracks"]["items"][0],
+                        search_page("qobuz", "q2")["tracks"]["items"][0],
+                    ]
+                }
+            }
+        ],
+    )
+
+    report = await MultiSourceComparator({"qobuz": qobuz}).compare(
+        seed.identity, reference_candidate=seed
+    )
+
+    assert report.candidates == [better]
+    assert report.selected == better
+
+
+@pytest.mark.asyncio
+async def test_unplayable_matching_edition_does_not_hide_a_later_candidate():
+    playable = candidate("qobuz", "q2", 24, 88200)
+
+    class EditionsClient(FakeClient):
+        async def get_candidate(self, source_id, quality):
+            assert quality == 4
+            if source_id == "q1":
+                raise RuntimeError("edition unavailable")
+            return playable
+
+    qobuz = EditionsClient(
+        "qobuz",
+        playable,
+        [
+            {
+                "tracks": {
+                    "items": [
+                        search_page("qobuz", "q1")["tracks"]["items"][0],
+                        search_page("qobuz", "q2")["tracks"]["items"][0],
+                    ]
+                }
+            }
+        ],
+    )
+
+    report = await MultiSourceComparator({"qobuz": qobuz}).compare(REFERENCE)
+
+    assert report.candidates == [playable]
+    assert report.errors == {}
+
+
+@pytest.mark.asyncio
 async def test_one_service_failure_does_not_cancel_other_services():
     clients = {
         "tidal": FakeClient("tidal", candidate("tidal", "t1", 24, 96000)),

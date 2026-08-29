@@ -607,6 +607,7 @@ def _print_comparison_report(report, format_quality, match_tracks):
 
     table = Table(title="Cross-service audio comparison")
     table.add_column("Service")
+    table.add_column("Track ID")
     table.add_column("Match")
     table.add_column("Available quality")
     table.add_column("Selected")
@@ -614,6 +615,7 @@ def _print_comparison_report(report, format_quality, match_tracks):
         match = match_tracks(report.reference, candidate.identity).value.upper()
         table.add_row(
             candidate.identity.source,
+            candidate.identity.source_id,
             match,
             format_quality(candidate.quality),
             "✓" if candidate is report.selected else "",

@@ -53,8 +53,6 @@ class MultiSourceComparator:
         reference_candidate: ServiceCandidate | None = None,
     ) -> ComparisonReport:
         report = ComparisonReport(reference)
-        if reference_candidate is not None:
-            report.candidates.append(reference_candidate)
         qualities = quality_by_source or {}
         results = await asyncio.gather(
             *(
@@ -63,23 +61,16 @@ class MultiSourceComparator:
                     client,
                     reference,
                     qualities.get(source, getattr(client, "max_quality", 0)),
+                    reference_candidate if source == reference.source else None,
                 )
                 for source, client in self.clients.items()
                 if source in {"tidal", "qobuz", "deezer"}
-                and not (
-                    reference_candidate is not None and source == reference.source
-                )
             ),
             return_exceptions=True,
         )
 
         sources = [
-            source
-            for source in self.clients
-            if source in {"tidal", "qobuz", "deezer"}
-            and not (
-                reference_candidate is not None and source == reference.source
-            )
+            source for source in self.clients if source in {"tidal", "qobuz", "deezer"}
         ]
         for source, result in zip(sources, results):
             if isinstance(result, Exception):
@@ -94,15 +85,27 @@ class MultiSourceComparator:
         client,
         reference: TrackIdentity,
         quality: int,
+        seed: ServiceCandidate | None = None,
     ) -> ServiceCandidate | None:
-        if source == reference.source:
-            candidate = await client.get_candidate(reference.source_id, quality)
-            return candidate if match_tracks(reference, candidate.identity) is not MatchKind.NONE else None
+        verified: list[ServiceCandidate] = []
+        candidate_errors: list[Exception] = []
+        seen_ids: set[str] = set()
+        if seed is not None:
+            verified.append(seed)
+            seen_ids.add(seed.identity.source_id)
+        elif source == reference.source:
+            try:
+                candidate = await client.get_candidate(reference.source_id, quality)
+            except Exception as error:
+                candidate_errors.append(error)
+            else:
+                if match_tracks(reference, candidate.identity) is not MatchKind.NONE:
+                    verified.append(candidate)
+                    seen_ids.add(candidate.identity.source_id)
 
         from .client.candidate import track_identity
 
         matches: list[tuple[int, TrackIdentity]] = []
-        seen_ids: set[str] = set()
         queries = []
         if reference.isrc:
             queries.append(reference.isrc.strip())
@@ -128,9 +131,17 @@ class MultiSourceComparator:
                     matches.append((priority, identity))
 
         for _, identity in sorted(matches, key=lambda pair: pair[0]):
-            candidate = await client.get_candidate(identity.source_id, quality)
+            try:
+                candidate = await client.get_candidate(identity.source_id, quality)
+            except Exception as error:
+                candidate_errors.append(error)
+                continue
             if match_tracks(reference, candidate.identity) is not MatchKind.NONE:
-                return candidate
+                verified.append(candidate)
+        if verified:
+            return choose_best(verified)
+        if candidate_errors:
+            raise candidate_errors[-1]
         return None
 
 
