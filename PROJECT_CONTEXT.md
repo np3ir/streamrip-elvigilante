@@ -312,7 +312,8 @@ Committed as `db3fbfd feat: add hybrid tidal and quality ceilings` (local only; 
 - Lossless deliveries with unknown properties are excluded when their corresponding ceiling cannot be proven; lossy audio remains the final lower-quality fallback. For a 16-bit ceiling, service requests are proactively limited to their CD-quality tier where supported.
 - Live preview-only validation `compare --max-bit-depth 16 tidal 20115564` changed Qobuz from its normal 24-bit/88.2 kHz delivery to FLAC 16-bit/44.1 kHz and selected it over TIDAL AAC, tied technically with Deezer FLAC 16-bit/44.1 kHz. No audio was downloaded.
 - Validation: focused tests `52 passed`; full suite `175 passed, 7 skipped`; Ruff clean on all changed code/tests. The pre-existing dependency deprecation and unrelated unclosed-session diagnostic remain visible in the suite log.
-- Remaining live step: authorize the private TV fallback token, then verify that TIDAL album `111808317` changes from AAC to FLAC 16-bit/44.1 kHz without downloading audio.
+- Live fallback validation completed after the user authorized the second TIDAL device session. The private token was written only to its dedicated local fallback store and is absent from this repository and memory.
+- Preview-only `compare --max-bit-depth 16 tidal 111808318` then delivered TIDAL FLAC/lossless/16-bit/44.1 kHz instead of the previous AAC result. Qobuz and Deezer also delivered FLAC 16-bit/44.1 kHz; Qobuz won the deterministic tie because it explicitly reported two channels while the TIDAL manifest left channel count unknown. No audio was downloaded.
 
 ## Explicit service-login foundation
 
