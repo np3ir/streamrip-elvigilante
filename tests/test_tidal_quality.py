@@ -1,8 +1,10 @@
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from streamrip.client.tidal import TidalClient
+from streamrip.multisource import AudioQuality
 
 
 def playback(audio_quality, codec, **technical):
@@ -73,3 +75,32 @@ async def test_tidal_cascade_supports_hires_lossless_as_top_tier():
     assert TidalClient.max_quality == 4
     assert result.quality.lossless is True
     assert result.quality.sample_rate_hz == 192000
+
+
+@pytest.mark.asyncio
+async def test_tidal_lossless_uses_tv_fallback_when_hires_token_degrades_to_aac():
+    client = object.__new__(TidalClient)
+    client.session = Mock()
+    client.allow_lossless_fallback = True
+
+    async def request(_path, params=None, **_kwargs):
+        return playback("HIGH", "mp4a.40.2", bitrate=320)
+
+    fallback_result = SimpleNamespace(
+        quality=AudioQuality(
+            codec="flac",
+            lossless=True,
+            bit_depth=16,
+            sample_rate_hz=44100,
+        )
+    )
+    fallback = SimpleNamespace(
+        get_downloadable=AsyncMock(return_value=fallback_result)
+    )
+    client._api_request = request
+    client._get_lossless_fallback_client = AsyncMock(return_value=fallback)
+
+    result = await client.get_downloadable("123", quality=3)
+
+    assert result is fallback_result
+    fallback.get_downloadable.assert_awaited_once_with("123", quality=2)

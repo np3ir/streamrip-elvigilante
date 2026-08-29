@@ -315,6 +315,66 @@ def login_group():
     """Manage private service sessions."""
 
 
+@login_group.command("tidal")
+@click.option(
+    "--fallback",
+    is_flag=True,
+    help="Authorize the TV-client token used for reliable LOSSLESS fallback.",
+)
+@click.pass_context
+@coro
+async def login_tidal(ctx, fallback):
+    """Authorize a TIDAL HiRes or LOSSLESS-fallback session."""
+
+    from ..client import TidalClient
+
+    cfg: Config | None = ctx.obj["config"]
+    if cfg is None:
+        return
+
+    client = TidalClient.lossless_fallback(cfg) if fallback else TidalClient(cfg)
+    label = "LOSSLESS fallback" if fallback else "HiRes"
+    try:
+        await client._open_session()
+        device_code, uri = await client._get_device_code()
+        login_link = f"https://{uri}"
+        console.print(
+            f"Authorize the TIDAL {label} session at "
+            f"[blue underline]{login_link}[/blue underline]."
+        )
+        click.launch(login_link)
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 600
+        info = None
+        while loop.time() < deadline:
+            status, result = await client._get_auth_status(device_code)
+            if status == 0:
+                info = result
+                break
+            if status != 2:
+                raise click.ClickException("TIDAL authorization failed.")
+            await asyncio.sleep(4)
+        if info is None:
+            raise click.ClickException("TIDAL authorization timed out.")
+
+        client.apply_device_auth(info)
+        if not fallback:
+            session = cfg.session.tidal
+            stored = cfg.file.tidal
+            stored.user_id = session.user_id
+            stored.country_code = session.country_code
+            stored.access_token = session.access_token
+            stored.refresh_token = session.refresh_token
+            stored.token_expiry = session.token_expiry
+            cfg.file.set_modified()
+            cfg.save_file()
+    finally:
+        await client.close()
+
+    console.print(f"[green]TIDAL {label} session configured.[/green]")
+
+
 @login_group.command("qobuz")
 @click.option(
     "--token",
@@ -542,6 +602,16 @@ async def search(ctx, first, output_file, num_results, source, media_type, query
     type=click.Choice(["tidal", "qobuz", "deezer"], case_sensitive=False),
     help="Service to compare; repeat the option. Defaults to all three.",
 )
+@click.option(
+    "--max-bit-depth",
+    type=click.IntRange(min=1, max=64),
+    help="Maximum lossless bit depth; higher deliveries are excluded.",
+)
+@click.option(
+    "--max-sample-rate",
+    type=click.FloatRange(min=1),
+    help="Maximum sample rate in kHz (for example 44.1, 48, 96 or 192).",
+)
 @click.argument(
     "source",
     type=click.Choice(["tidal", "qobuz", "deezer"], case_sensitive=False),
@@ -549,11 +619,24 @@ async def search(ctx, first, output_file, num_results, source, media_type, query
 @click.argument("track-id")
 @click.pass_context
 @coro
-async def compare_sources(ctx, download_best, services, source, track_id):
+async def compare_sources(
+    ctx,
+    download_best,
+    services,
+    max_bit_depth,
+    max_sample_rate,
+    source,
+    track_id,
+):
     """Compare a track across services; downloading is opt-in."""
 
-    from ..comparison import MultiSourceComparator, download_selected, format_quality
-    from ..multisource import match_tracks
+    from ..comparison import (
+        MultiSourceComparator,
+        download_selected,
+        format_quality,
+        service_quality_for_ceiling,
+    )
+    from ..multisource import QualityCeiling, match_tracks, normalize_sample_rate
 
     if ctx.obj["config"] is None:
         return
@@ -561,11 +644,23 @@ async def compare_sources(ctx, download_best, services, source, track_id):
     configured = tuple(dict.fromkeys(services or ("tidal", "qobuz", "deezer")))
     if source not in configured:
         configured = (source, *configured)
+    ceiling = (
+        QualityCeiling(
+            bit_depth=max_bit_depth,
+            sample_rate_hz=normalize_sample_rate(max_sample_rate),
+        )
+        if max_bit_depth is not None or max_sample_rate is not None
+        else None
+    )
 
     with ctx.obj["config"] as cfg:
         async with Main(cfg) as main:
             reference_client = await main.get_logged_in_client(source)
-            reference_quality = cfg.session.get_source(source).quality
+            reference_quality = service_quality_for_ceiling(
+                source,
+                cfg.session.get_source(source).quality,
+                ceiling,
+            )
             reference_candidate = await reference_client.get_candidate(
                 track_id, reference_quality
             )
@@ -583,13 +678,18 @@ async def compare_sources(ctx, download_best, services, source, track_id):
                     login_errors[service] = f"{type(error).__name__}: {error}"
 
             qualities = {
-                service: cfg.session.get_source(service).quality
+                service: service_quality_for_ceiling(
+                    service,
+                    cfg.session.get_source(service).quality,
+                    ceiling,
+                )
                 for service in active_clients
             }
             report = await MultiSourceComparator(active_clients).compare(
                 reference_candidate.identity,
                 qualities,
                 reference_candidate=reference_candidate,
+                ceiling=ceiling,
             )
             report.errors.update(login_errors)
 

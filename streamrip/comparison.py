@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from .multisource import (
     MatchKind,
+    QualityCeiling,
     ServiceCandidate,
     TrackIdentity,
     choose_best,
@@ -19,10 +20,16 @@ class ComparisonReport:
     reference: TrackIdentity
     candidates: list[ServiceCandidate] = field(default_factory=list)
     errors: dict[str, str] = field(default_factory=dict)
+    ceiling: QualityCeiling | None = None
 
     @property
     def selected(self) -> ServiceCandidate | None:
-        return choose_best(self.candidates) if self.candidates else None
+        if not self.candidates:
+            return None
+        try:
+            return choose_best(self.candidates, self.ceiling)
+        except ValueError:
+            return None
 
 
 def search_items(source: str, pages: list[dict]) -> list[dict]:
@@ -39,6 +46,22 @@ def search_items(source: str, pages: list[dict]) -> list[dict]:
     return items
 
 
+def service_quality_for_ceiling(
+    source: str,
+    configured_quality: int,
+    ceiling: QualityCeiling | None,
+) -> int:
+    """Avoid requesting a service tier known to exceed a bit-depth ceiling."""
+
+    if ceiling is None or ceiling.bit_depth is None:
+        return configured_quality
+    if ceiling.bit_depth < 16:
+        return min(configured_quality, 1)
+    if ceiling.bit_depth == 16 and source in {"tidal", "qobuz", "deezer"}:
+        return min(configured_quality, 2)
+    return configured_quality
+
+
 class MultiSourceComparator:
     """Find and inspect equivalent recordings across authenticated clients."""
 
@@ -51,8 +74,9 @@ class MultiSourceComparator:
         reference: TrackIdentity,
         quality_by_source: dict[str, int] | None = None,
         reference_candidate: ServiceCandidate | None = None,
+        ceiling: QualityCeiling | None = None,
     ) -> ComparisonReport:
-        report = ComparisonReport(reference)
+        report = ComparisonReport(reference, ceiling=ceiling)
         qualities = quality_by_source or {}
         results = await asyncio.gather(
             *(

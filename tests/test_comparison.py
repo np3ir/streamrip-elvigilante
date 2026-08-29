@@ -7,9 +7,11 @@ from streamrip.comparison import (
     download_selected,
     format_quality,
     search_items,
+    service_quality_for_ceiling,
 )
 from streamrip.multisource import (
     AudioQuality,
+    QualityCeiling,
     ServiceCandidate,
     TrackIdentity,
 )
@@ -102,6 +104,14 @@ def test_formats_normalized_quality_for_cli():
         )
     )
     assert text == "FLAC / lossless / 24-bit / 192 kHz / 2 ch"
+
+
+def test_16_bit_ceiling_requests_cd_tiers_from_all_services():
+    ceiling = QualityCeiling(bit_depth=16)
+
+    assert service_quality_for_ceiling("tidal", 4, ceiling) == 2
+    assert service_quality_for_ceiling("qobuz", 4, ceiling) == 2
+    assert service_quality_for_ceiling("deezer", 2, ceiling) == 2
 
 
 @pytest.mark.asyncio

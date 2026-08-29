@@ -3,6 +3,7 @@ import pytest
 from streamrip.multisource import (
     AudioQuality,
     MatchKind,
+    QualityCeiling,
     ServiceCandidate,
     TrackIdentity,
     choose_best,
@@ -76,6 +77,47 @@ def test_higher_lossless_resolution_wins():
         AudioQuality(codec="flac", lossless=True, bit_depth=24, sample_rate_hz=96000),
     )
     assert choose_best([cd, hires]) is hires
+
+
+def test_bit_depth_ceiling_prefers_16_bit_over_higher_resolution():
+    cd = candidate(
+        "deezer",
+        AudioQuality(codec="flac", lossless=True, bit_depth=16, sample_rate_hz=44100),
+    )
+    hires = candidate(
+        "qobuz",
+        AudioQuality(codec="flac", lossless=True, bit_depth=24, sample_rate_hz=192000),
+    )
+
+    assert choose_best([hires, cd], QualityCeiling(bit_depth=16)) is cd
+
+
+def test_ceiling_falls_back_to_lossy_when_lossless_delivery_is_too_high():
+    hires = candidate(
+        "qobuz",
+        AudioQuality(codec="flac", lossless=True, bit_depth=24, sample_rate_hz=96000),
+    )
+    aac = candidate(
+        "tidal",
+        AudioQuality(codec="aac", lossless=False, bitrate_kbps=320),
+    )
+
+    assert choose_best([hires, aac], QualityCeiling(bit_depth=16)) is aac
+
+
+def test_sample_rate_ceiling_excludes_unknown_and_above_ceiling_lossless():
+    unknown = candidate("tidal", AudioQuality(codec="flac", lossless=True))
+    high_rate = candidate(
+        "qobuz",
+        AudioQuality(codec="flac", lossless=True, bit_depth=16, sample_rate_hz=96000),
+    )
+    cd = candidate(
+        "deezer",
+        AudioQuality(codec="flac", lossless=True, bit_depth=16, sample_rate_hz=44100),
+    )
+
+    ceiling = QualityCeiling(bit_depth=16, sample_rate_hz=48000)
+    assert choose_best([unknown, high_rate, cd], ceiling) is cd
 
 
 @pytest.mark.parametrize(

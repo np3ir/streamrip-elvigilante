@@ -70,6 +70,30 @@ class ServiceCandidate:
     quality: AudioQuality
 
 
+@dataclass(frozen=True, slots=True)
+class QualityCeiling:
+    """Maximum delivered fidelity accepted by cross-service selection."""
+
+    bit_depth: int | None = None
+    sample_rate_hz: int | None = None
+
+    def allows(self, quality: AudioQuality) -> bool:
+        # PCM bit depth/sample rate do not describe lossy codecs consistently;
+        # lossy delivery remains the final fallback below lossless candidates.
+        if not quality.lossless:
+            return True
+        if self.bit_depth is not None:
+            if quality.bit_depth is None or quality.bit_depth > self.bit_depth:
+                return False
+        if self.sample_rate_hz is not None:
+            if (
+                quality.sample_rate_hz is None
+                or quality.sample_rate_hz > self.sample_rate_hz
+            ):
+                return False
+        return True
+
+
 def normalize_sample_rate(value: int | float | None) -> int | None:
     """Normalize a service sample rate (kHz or Hz) to integer Hz."""
 
@@ -108,10 +132,19 @@ def match_tracks(
     return MatchKind.METADATA
 
 
-def choose_best(candidates: list[ServiceCandidate]) -> ServiceCandidate:
+def choose_best(
+    candidates: list[ServiceCandidate],
+    ceiling: QualityCeiling | None = None,
+) -> ServiceCandidate:
     """Choose the highest-fidelity candidate with a stable source tie-break."""
 
     if not candidates:
         raise ValueError("At least one service candidate is required")
-    return max(candidates, key=lambda item: (item.quality.rank, item.identity.source))
-
+    eligible = (
+        [item for item in candidates if ceiling.allows(item.quality)]
+        if ceiling is not None
+        else candidates
+    )
+    if not eligible:
+        raise ValueError("No candidate satisfies the requested quality ceiling")
+    return max(eligible, key=lambda item: (item.quality.rank, item.identity.source))

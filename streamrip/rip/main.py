@@ -358,7 +358,9 @@ class Main:
 
     async def __aexit__(self, *_):
         for client in self.clients.values():
-            if hasattr(client, "session"):
+            if hasattr(client, "close"):
+                await client.close()
+            elif hasattr(client, "session"):
                 await client.session.close()
         try:
             if hasattr(self.database, "downloads") and hasattr(self.database.downloads, "close"):

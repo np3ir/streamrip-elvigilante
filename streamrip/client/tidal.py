@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import base64
 import json
@@ -6,13 +8,19 @@ import os
 import random
 import re
 import time
+from types import SimpleNamespace
 
 import aiohttp
 import click
 from aiohttp import ClientSession, ClientTimeout, CookieJar, TCPConnector
 
 from ..config import Config
-from ..exceptions import AuthenticationError, NonStreamableError, TidalRateLimitError
+from ..exceptions import (
+    AuthenticationError,
+    MissingCredentialsError,
+    NonStreamableError,
+    TidalRateLimitError,
+)
 from .client import Client
 from .downloadable import TidalDownloadable, TidalVideoDownloadable
 from .request_budget import RateLimitGuard, SharedRequestBudget
@@ -54,6 +62,8 @@ def _get_client_credentials() -> tuple[str, str]:
 
 
 CLIENT_ID, CLIENT_SECRET = _get_client_credentials()
+TV_CLIENT_ID = "4N3n6Q1x95LL5K7p"
+TV_CLIENT_SECRET = "oKOXfJW371cX6xaZ0PyhgGNBdNLlBZd4AKKYougMjik="
 STREAM_URL_REGEX = re.compile(
     r"#EXT-X-STREAM-INF:BANDWIDTH=\d+,AVERAGE-BANDWIDTH=\d+,CODECS=\"(?!jpeg)[^\"]+\",RESOLUTION=\d+x\d+\n(.+)"
 )
@@ -70,6 +80,9 @@ QUALITY_PRIORITY = [4, 3, 2, 1, 0]
 
 # Dedicated token file — separate from config.toml, with restricted permissions
 _TOKEN_FILE = os.path.join(click.get_app_dir("streamrip"), "tidal_token.json")
+_FALLBACK_TOKEN_FILE = os.path.join(
+    click.get_app_dir("streamrip"), "tidal_token_fallback.json"
+)
 
 # Refresh threshold: refresh when less than 1 hour remains (like tiddl)
 _REFRESH_THRESHOLD = 3600
@@ -118,10 +131,32 @@ class TidalClient(Client):
         config: Config,
         request_budget: SharedRequestBudget | None = None,
         rate_limit_guard: RateLimitGuard | None = None,
+        *,
+        oauth_credentials: tuple[str, str] | None = None,
+        token_store: TidalTokenStore | None = None,
+        token_role: str = "primary",
+        allow_lossless_fallback: bool = True,
     ):
         self.logged_in = False
         self.global_config = config
-        self.config = config.session.tidal
+        self.token_role = token_role
+        self.config = (
+            config.session.tidal
+            if token_role == "primary"
+            else SimpleNamespace(
+                access_token="",
+                refresh_token="",
+                token_expiry="",
+                user_id="",
+                country_code="",
+            )
+        )
+        self.oauth_client_id, self.oauth_client_secret = (
+            oauth_credentials or (CLIENT_ID, CLIENT_SECRET)
+        )
+        self.allow_lossless_fallback = allow_lossless_fallback
+        self._lossless_fallback_client: TidalClient | None = None
+        self._lossless_fallback_checked = False
         
         # --- CONFIGURACIÓN DE SEGURIDAD ---
         rpm = config.session.downloads.requests_per_minute
@@ -139,9 +174,28 @@ class TidalClient(Client):
         # --------------------------------------------
 
         self.auth_lock = asyncio.Lock()
-        self.token_store = TidalTokenStore()
+        self.token_store = token_store or TidalTokenStore()
 
-    async def login(self):
+    @classmethod
+    def lossless_fallback(cls, config: Config) -> TidalClient:
+        """Build the TV-client session used for reliable 16-bit FLAC."""
+
+        return cls(
+            config,
+            oauth_credentials=(TV_CLIENT_ID, TV_CLIENT_SECRET),
+            token_store=TidalTokenStore(_FALLBACK_TOKEN_FILE),
+            token_role="fallback",
+            allow_lossless_fallback=False,
+        )
+
+    @staticmethod
+    def has_lossless_fallback() -> bool:
+        stored = TidalTokenStore(_FALLBACK_TOKEN_FILE).load()
+        return bool(stored and stored.get("access_token"))
+
+    async def _open_session(self):
+        if hasattr(self, "session") and not self.session.closed:
+            return
         jar = CookieJar(unsafe=True)
         connector = TCPConnector(limit=10, force_close=True, enable_cleanup_closed=True)
         timeout = ClientTimeout(total=3600, connect=30, sock_read=60)
@@ -169,6 +223,9 @@ class TidalClient(Client):
         if not self.global_config.session.downloads.verify_ssl:
             self.session.connector._ssl = False
 
+    async def login(self):
+        await self._open_session()
+
         c = self.config
 
         # Load tokens from dedicated file if available; fall back to config.toml
@@ -179,6 +236,10 @@ class TidalClient(Client):
             c.token_expiry  = stored.get("token_expiry", c.token_expiry)
             c.user_id       = stored.get("user_id", c.user_id)
             c.country_code  = stored.get("country_code", c.country_code)
+        elif self.token_role != "primary":
+            raise MissingCredentialsError(
+                "TIDAL fallback credentials are not configured"
+            )
 
         self.token_expiry  = float(c.token_expiry) if c.token_expiry else 0
         self.refresh_token = c.refresh_token
@@ -190,6 +251,12 @@ class TidalClient(Client):
             if c.access_token:
                 await self._login_by_access_token(c.access_token, c.user_id)
         self.logged_in = True
+
+    async def close(self):
+        if self._lossless_fallback_client is not None:
+            await self._lossless_fallback_client.close()
+        if hasattr(self, "session") and not self.session.closed:
+            await self.session.close()
 
     async def get_artist_albums_stream(self, artist_id: str):
         queue = asyncio.Queue()
@@ -361,9 +428,59 @@ class TidalClient(Client):
                 last_err = e
                 continue
 
+        if (
+            best_lossy is not None
+            and quality >= 2
+            and getattr(self, "allow_lossless_fallback", False)
+        ):
+            fallback = await self._get_lossless_fallback_client()
+            if fallback is not None:
+                try:
+                    fallback_result = await fallback.get_downloadable(
+                        track_id, quality=2
+                    )
+                except Exception as error:
+                    logger.debug(
+                        "TIDAL TV LOSSLESS fallback failed for %s: %s",
+                        track_id,
+                        error,
+                    )
+                else:
+                    if fallback_result.quality.rank > best_lossy.quality.rank:
+                        return fallback_result
         if best_lossy is not None:
             return best_lossy
         raise NonStreamableError(f"No playable TIDAL stream available: {last_err}")
+
+    async def _get_lossless_fallback_client(self) -> TidalClient | None:
+        """Return the optional TV-token client used for 16-bit FLAC fallback."""
+
+        if self._lossless_fallback_client is None and not self._lossless_fallback_checked:
+            self._lossless_fallback_checked = True
+            fallback = self.lossless_fallback(self.global_config)
+            fallback.request_budget = self.request_budget
+            try:
+                await fallback.login()
+            except MissingCredentialsError:
+                await fallback.close()
+                return None
+            self._lossless_fallback_client = fallback
+        return self._lossless_fallback_client
+
+    def apply_device_auth(self, info: dict[str, int | str]) -> None:
+        """Install and persist one completed device-flow authorization."""
+
+        c = self.config
+        c.user_id = info["user_id"]
+        c.country_code = info["country_code"]
+        c.access_token = info["access_token"]
+        c.refresh_token = info["refresh_token"]
+        c.token_expiry = info["token_expiry"]
+        self.refresh_token = str(c.refresh_token)
+        self.token_expiry = float(c.token_expiry)
+        self._update_authorization_from_config()
+        self._persist_token()
+        self.logged_in = True
 
     async def _get_video_downloadable(self, video_id: str, quality: int):
         q_map = {0: "LOW", 1: "MEDIUM", 2: "HIGH", 3: "HIGH"}
@@ -442,8 +559,10 @@ class TidalClient(Client):
                 return
             logger.info("Refreshing Tidal token...")
             data = {
-                "client_id": CLIENT_ID,
-                "client_secret": CLIENT_SECRET,
+                "client_id": getattr(self, "oauth_client_id", CLIENT_ID),
+                "client_secret": getattr(
+                    self, "oauth_client_secret", CLIENT_SECRET
+                ),
                 "refresh_token": self.refresh_token,
                 "grant_type": "refresh_token",
                 "scope": "r_usr+w_usr+w_sub",
@@ -483,7 +602,10 @@ class TidalClient(Client):
 
         response = await self._api_post(
             f"{AUTH_URL}/device_authorization",
-            {"client_id": CLIENT_ID, "scope": "r_usr+w_usr+w_sub"},
+            {
+                "client_id": getattr(self, "oauth_client_id", CLIENT_ID),
+                "scope": "r_usr+w_usr+w_sub",
+            },
         )
         if response.get("status", 200) != 200:
             raise AuthenticationError("TIDAL device authorization failed")
@@ -497,8 +619,10 @@ class TidalClient(Client):
         response = await self._api_post(
             f"{AUTH_URL}/token",
             {
-                "client_id": CLIENT_ID,
-                "client_secret": CLIENT_SECRET,
+                "client_id": getattr(self, "oauth_client_id", CLIENT_ID),
+                "client_secret": getattr(
+                    self, "oauth_client_secret", CLIENT_SECRET
+                ),
                 "device_code": device_code,
                 "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                 "scope": "r_usr+w_usr+w_sub",
