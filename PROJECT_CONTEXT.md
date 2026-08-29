@@ -129,9 +129,9 @@ Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 Latest full run after restoring the standalone search workflows:
 
-- `168 passed`
+- `170 passed`
 - `7 skipped` (credentials/integration tests unavailable)
-- `0` runtime warnings in the final suite summary
+- No test failures; the run logs a dependency deprecation and a pre-existing unclosed-session diagnostic during unrelated tests.
 - Ruff clean on all modified/new files. A separate whole-repository Ruff run reports one pre-existing `RUF036` ordering issue in `streamrip/media/semaphore.py:10`; it is unrelated to the current comparison change.
 - `git diff --check` clean except informational LF-to-CRLF warnings on Windows
 
@@ -145,7 +145,7 @@ Commands:
 ## Next work
 
 1. Remove the two exact temporary live-validation directories after user confirmation or through an allowed safe cleanup mechanism; both paths are listed below.
-2. Identify a recording genuinely present in TIDAL, Deezer, and Qobuz, then run a preview-only comparison to validate identity matching and quality ranking across all three catalogs.
+2. With explicit user authorization, run one controlled `--download-best` test for the verified Daft Punk recording and inspect the resulting file/container/metadata. Preview-only comparison is already complete.
 3. Decide whether to prepare a side-by-side 2.2.8 installation without replacing global `rip 2.1.0`.
 
 ## Committed opt-in best-source download
@@ -269,6 +269,19 @@ Committed as `73dbc30 fix: restore search workflows` (local only; not pushed).
 - Preview-only live searches completed successfully against Qobuz, Deezer, and TIDAL and produced parseable temporary JSON files; the exact temporary files were removed afterward. Qobuz and Deezer returned unrelated textual matches for the probe, while TIDAL returned the expected Scorpions recording. No selection or audio download occurred.
 - Validation: focused search tests `5 passed`; full suite `168 passed, 7 skipped`; Ruff clean on the changed code/tests; `git diff --check` clean except informational Windows line-ending notices.
 
+## Best-edition selection across services
+
+Committed as `0b690b9 fix: select best matching service edition` (local only; not pushed).
+
+- Each service now evaluates all de-duplicated matching editions returned by ISRC and metadata discovery, re-verifies identity after resolving the playable candidate, and retains the highest normalized audio quality for that service.
+- A failed/unplayable matching edition no longer prevents later matching editions from being evaluated. If every candidate fails, the service error remains visible in the comparison report.
+- The source used to start the comparison is also searched for alternate editions while retaining the already resolved reference as a safe seed.
+- The comparison table now displays the selected service track IDs, making edition and reverse-reference checks auditable.
+- Live preview-only validation used Daft Punk's `Get Lucky`. Starting from TIDAL `20115564` and inversely from Qobuz `9140031` converged on the same exact-ISRC set: Qobuz `9140031` at FLAC/lossless/24-bit/88.2 kHz, TIDAL `20115564` as AAC (`MP4A.40.2`) for that edition, and Deezer `67238735` at FLAC/lossless/16-bit/44.1 kHz. Qobuz was selected in both directions. No audio was downloaded.
+- A superficially similar Qobuz result, `8767428`, correctly resolved to a different exact-ISRC set (TIDAL `19823990`, Deezer `66609426`) at up to 24-bit/44.1 kHz; this explained the earlier apparent inconsistency and confirms that matching is recording-specific rather than title-only.
+- All temporary JSON catalog-probe files and their exact temporary directory were removed after validation.
+- Validation: comparison/CLI tests `15 passed`; full suite `170 passed, 7 skipped`; Ruff clean on changed code/tests; `git diff --check` clean except informational Windows line-ending notices. The suite still logs a dependency deprecation and a pre-existing unclosed-session diagnostic during unrelated tests; neither failed the suite.
+
 ## Explicit service-login foundation
 
 Committed as `72f1df0 feat: add secure service login commands` with documentation checkpoint `24d91d3 docs: record service login foundation` (local only; not pushed).
@@ -307,6 +320,6 @@ Committed as `2fda1e0 feat: add assisted deezer browser login`, with documentati
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, ISRC-first comparison in `3d0d832`, explicit service-login commands in `72f1df0`, browser-assisted Deezer login in `2fda1e0`, and restored standalone search in `73dbc30`. The working tree is expected to be clean after this documentation checkpoint is committed.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, ISRC-first comparison in `3d0d832`, explicit service-login commands in `72f1df0`, browser-assisted Deezer login in `2fda1e0`, restored standalone search in `73dbc30`, and best-edition selection in `0b690b9`. The working tree is expected to be clean after this documentation checkpoint is committed.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
