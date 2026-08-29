@@ -129,7 +129,7 @@ Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 Latest full run after restoring the standalone search workflows:
 
-- `175 passed`
+- `177 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - No test failures; the run logs a dependency deprecation and a pre-existing unclosed-session diagnostic during unrelated tests.
 - Ruff clean on all modified/new files. A separate whole-repository Ruff run reports one pre-existing `RUF036` ordering issue in `streamrip/media/semaphore.py:10`; it is unrelated to the current comparison change.
@@ -315,6 +315,17 @@ Committed as `db3fbfd feat: add hybrid tidal and quality ceilings` (local only; 
 - Live fallback validation completed after the user authorized the second TIDAL device session. The private token was written only to its dedicated local fallback store and is absent from this repository and memory.
 - Preview-only `compare --max-bit-depth 16 tidal 111808318` then delivered TIDAL FLAC/lossless/16-bit/44.1 kHz instead of the previous AAC result. Qobuz and Deezer also delivered FLAC 16-bit/44.1 kHz; Qobuz won the deterministic tie because it explicitly reported two channels while the TIDAL manifest left channel count unknown. No audio was downloaded.
 
+## Persistent comparison-quality policy
+
+Committed as `9bbdb8a feat: persist comparison quality policy` (local only; not pushed).
+
+- Added a backward-compatible `[comparison]` configuration section with `max_bit_depth`, `max_sample_rate` (kHz), `prefer_lossless`, and `fallback_to_lossy`. Existing same-version configurations without the section load safe defaults and acquire the section on a controlled save.
+- `rip compare` now reads the permanent policy whenever the corresponding CLI option is omitted. CLI flags remain one-run overrides, including `--prefer-lossless/--no-prefer-lossless` and `--fallback-to-lossy/--no-fallback-to-lossy`.
+- When lossy fallback is disabled and no lossless candidate satisfies the ceiling, no winner is selected or downloaded. Unknown lossless technical properties remain ineligible when they cannot prove compliance with an active ceiling.
+- The user's active private config was backed up to `config.toml.before-comparison-policy.bak`, then configured for maximum 16-bit/44.1 kHz, lossless preference enabled, and lossy fallback enabled. No credential fields were read, printed, or copied into the repository.
+- Live preview `rip compare tidal 20115564` without quality flags proved the permanent policy was applied: TIDAL, Qobuz, and Deezer all resolved to FLAC 16-bit/44.1 kHz and Qobuz won the deterministic tie. No audio was downloaded.
+- Validation: focused configuration/comparison tests `46 passed`; full suite `177 passed, 7 skipped`; Ruff clean on changed files. A zero-byte stale Git `packed-refs.lock` left during commit was removed only after confirming no Git process was active.
+
 ## Explicit service-login foundation
 
 Committed as `72f1df0 feat: add secure service login commands` with documentation checkpoint `24d91d3 docs: record service login foundation` (local only; not pushed).
@@ -353,6 +364,6 @@ Committed as `2fda1e0 feat: add assisted deezer browser login`, with documentati
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, ISRC-first comparison in `3d0d832`, explicit service-login commands in `72f1df0`, browser-assisted Deezer login in `2fda1e0`, restored standalone search in `73dbc30`, best-edition selection in `0b690b9`, and hybrid TIDAL plus quality ceilings in `db3fbfd`. The working tree is expected to be clean after this documentation checkpoint is committed.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, ISRC-first comparison in `3d0d832`, explicit service-login commands in `72f1df0`, browser-assisted Deezer login in `2fda1e0`, restored standalone search in `73dbc30`, best-edition selection in `0b690b9`, hybrid TIDAL plus quality ceilings in `db3fbfd`, and persistent comparison policy in `9bbdb8a`. The working tree is expected to be clean after this documentation checkpoint is committed.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
