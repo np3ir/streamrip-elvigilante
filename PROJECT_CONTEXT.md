@@ -291,6 +291,14 @@ Committed as `0b690b9 fix: select best matching service edition` (local only; no
 - Tags include title, artist, album, copyright, track 8, disc 1, year 2023, and ISRC `USQX91300108`. SHA-256: `27464EACA9B9B2084404205B0457149D0D686A5E7955BEB9831A279B35BB97CF`.
 - This was the first authorized real-media download for the cross-service selector. The file remains in the configured music library; it was not removed because it is the requested output.
 
+## TIDAL lossless-delivery diagnosis for album 111808317
+
+- Metadata-only inspection identified the album as Marta Soto's `Míranos (Deluxe Edition)`, 28 tracks, released 2018-08-31. Every track has an ISRC and preview-only comparison found an exact match in TIDAL, Qobuz, and Deezer.
+- Qobuz and Deezer delivered FLAC/lossless/16-bit/44.1 kHz for the inspected album tracks. TIDAL metadata advertised `audioQuality=LOSSLESS` and the `LOSSLESS` media tag, but playback requests for both `HI_RES_LOSSLESS` and `HI_RES` returned `HIGH` AAC (`mp4a.40.2`).
+- The explicit `LOSSLESS` probe was stopped by the existing account-protection circuit breaker after repeated HTTP 429 responses; no attempt was made to bypass the guard and no album audio was downloaded.
+- Local tiddl-elvigilante inspection explains the discrepancy: it uses hybrid TIDAL authentication with a HiRes-capable session for MAX/24-bit and a separate TV-client session for reliable LOSSLESS/16-bit fallback. Its downloader explicitly re-requests `LOSSLESS` through the TV session when the HiRes session degrades a lossless-only track to `HIGH` AAC.
+- Streamrip currently stores and uses only one TIDAL session/client identity. Reproducing tiddl-elvigilante's dual-session routing is therefore the next required TIDAL fix; merely changing the configured quality tier cannot solve this case.
+
 ## Explicit service-login foundation
 
 Committed as `72f1df0 feat: add secure service login commands` with documentation checkpoint `24d91d3 docs: record service login foundation` (local only; not pushed).
