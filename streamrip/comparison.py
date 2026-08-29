@@ -32,6 +32,76 @@ class ComparisonReport:
             return None
 
 
+@dataclass(slots=True)
+class ComparisonCollection:
+    """Ordered track references resolved from a collection."""
+
+    name: str
+    track_ids: list[str]
+    media_type: str
+
+
+def _track_ids(source: str, response: dict) -> list[str]:
+    """Extract ordered track IDs from an album or playlist response."""
+
+    tracks = response.get("tracks") or []
+    if isinstance(tracks, dict):
+        tracks = tracks.get("items") or tracks.get("data") or []
+    return [str(item["id"]) for item in tracks if item.get("id") is not None]
+
+
+def _collection_name(response: dict, fallback: str) -> str:
+    return str(response.get("title") or response.get("name") or fallback)
+
+
+async def resolve_comparison_collection(
+    client,
+    media_type: str,
+    item_id: str,
+) -> ComparisonCollection:
+    """Resolve a track, album, playlist, or artist without filesystem effects."""
+
+    if media_type == "track":
+        return ComparisonCollection(f"Track {item_id}", [str(item_id)], media_type)
+
+    if media_type in {"album", "playlist", "mix"}:
+        response = await client.get_metadata(item_id, media_type)
+        return ComparisonCollection(
+            _collection_name(response, f"{media_type.title()} {item_id}"),
+            _track_ids(client.source, response),
+            media_type,
+        )
+
+    if media_type != "artist":
+        raise ValueError(f"Unsupported comparison type: {media_type}")
+
+    from .metadata import ArtistMetadata
+
+    response = await client.get_metadata(item_id, "artist")
+    artist = ArtistMetadata.from_resp(response, client.source)
+    album_ids: list[str] = [str(album_id) for album_id in artist.album_ids()]
+    album_responses: list[dict] = []
+    for start in range(0, len(album_ids), 8):
+        batch = await asyncio.gather(
+            *(
+                client.get_metadata(album_id, "album")
+                for album_id in album_ids[start : start + 8]
+            ),
+            return_exceptions=True,
+        )
+        album_responses.extend(
+            response for response in batch if isinstance(response, dict)
+        )
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for album in album_responses:
+        for track_id in _track_ids(client.source, album):
+            if track_id not in seen:
+                seen.add(track_id)
+                ordered.append(track_id)
+    return ComparisonCollection(artist.name, ordered, media_type)
+
+
 def search_items(source: str, pages: list[dict]) -> list[dict]:
     """Flatten Streamrip's service-specific paginated search responses."""
 

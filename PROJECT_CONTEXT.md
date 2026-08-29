@@ -127,9 +127,9 @@ Committed as `83a5f99 fix: protect config migrations` (local only; not pushed).
 
 ## Validation baseline
 
-Latest full run after restoring the standalone search workflows:
+Latest full run after adding collection comparison:
 
-- `177 passed`
+- `180 passed`
 - `7 skipped` (credentials/integration tests unavailable)
 - No test failures; the run logs a dependency deprecation and a pre-existing unclosed-session diagnostic during unrelated tests.
 - Ruff clean on all modified/new files. A separate whole-repository Ruff run reports one pre-existing `RUF036` ordering issue in `streamrip/media/semaphore.py:10`; it is unrelated to the current comparison change.
@@ -145,8 +145,23 @@ Commands:
 ## Next work
 
 1. Remove the two exact temporary live-validation directories after user confirmation or through an allowed safe cleanup mechanism; both paths are listed below.
-2. Add a user-facing URL/query entry point for best-source selection so users do not need to discover a service track ID before running `compare`.
-3. Decide whether to prepare a side-by-side 2.2.8 installation without replacing global `rip 2.1.0`.
+2. Preserve one coherent reference album/playlist folder and collection metadata when `--download-best` selects tracks from mixed services; current collection download queues winning tracks individually through the normal single-track pipeline.
+3. Improve TIDAL's stereo-lossless preference when an otherwise lossless release first returns EAC3 spatial audio.
+4. Decide whether to prepare a side-by-side 2.2.8 installation without replacing global `rip 2.1.0`.
+
+## Collection and direct-URL comparison
+
+Implemented on 2026-08-28; pending local checkpoint commit at the time of this memory update.
+
+- `rip compare` now accepts a standard TIDAL, Qobuz, or Deezer track, album, playlist, or artist URL directly. Existing `rip compare SOURCE TRACK_ID` syntax remains compatible.
+- IDs for collections use `--type album`, `--type playlist`, or `--type artist`; `track` remains the default.
+- Album and playlist tracks retain source order. Artist comparison resolves the service discography in batches of eight album-metadata requests, skips unavailable album responses, and de-duplicates repeated track IDs while preserving first occurrence.
+- Preview resolution is metadata-only: it does not create collection folders or fetch artwork. Each recording is then compared using the existing exact-ISRC and delivered-quality pipeline.
+- Collection output identifies every track, prints its service-quality table, and finishes with winner counts by service.
+- `--download-best` queues the selected winner for every comparable track only after the complete preview. It remains explicitly opt-in. Collection-level folder/tag coherence across mixed winning services is still listed as follow-up work.
+- Unit coverage was added for album, playlist, and artist resolution, including ordered de-duplication. Focused comparison/CLI validation: `19 passed`.
+- Live preview used `https://tidal.com/album/545097792` (Bryan Adams, `Tough Town`, 10 tracks). All ten recordings matched Qobuz and Deezer exactly by ISRC. With the configured 16-bit/44.1-kHz ceiling, Qobuz and Deezer delivered FLAC 16/44.1; Qobuz won the deterministic tie on all ten. TIDAL delivered EAC3 spatial. The command completed with `Collection winners: qobuz: 10`; no media was downloaded.
+- Full suite: `180 passed, 7 skipped`. Ruff is clean on all changed files. Whole-tree Ruff continues to report only the pre-existing `RUF036` in `streamrip/media/semaphore.py:10`; the dependency deprecation and unrelated unclosed-session diagnostic also remain non-failing.
 
 ## Committed opt-in best-source download
 
@@ -364,6 +379,6 @@ Committed as `2fda1e0 feat: add assisted deezer browser login`, with documentati
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, ISRC-first comparison in `3d0d832`, explicit service-login commands in `72f1df0`, browser-assisted Deezer login in `2fda1e0`, restored standalone search in `73dbc30`, best-edition selection in `0b690b9`, hybrid TIDAL plus quality ceilings in `db3fbfd`, and persistent comparison policy in `9bbdb8a`. The working tree is expected to be clean after this documentation checkpoint is committed.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, ISRC-first comparison in `3d0d832`, explicit service-login commands in `72f1df0`, browser-assisted Deezer login in `2fda1e0`, restored standalone search in `73dbc30`, best-edition selection in `0b690b9`, hybrid TIDAL plus quality ceilings in `db3fbfd`, and persistent comparison policy in `9bbdb8a`. Collection/direct-URL comparison is implemented and pending its local checkpoint commit. No push occurred.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.

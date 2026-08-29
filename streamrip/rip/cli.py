@@ -593,7 +593,7 @@ async def search(ctx, first, output_file, num_results, source, media_type, query
 @click.option(
     "--download-best",
     is_flag=True,
-    help="Download only the highest-fidelity matching track after comparison.",
+    help="Download the highest-fidelity match for each compared track.",
 )
 @click.option(
     "--service",
@@ -601,6 +601,14 @@ async def search(ctx, first, output_file, num_results, source, media_type, query
     multiple=True,
     type=click.Choice(["tidal", "qobuz", "deezer"], case_sensitive=False),
     help="Service to compare; repeat the option. Defaults to all three.",
+)
+@click.option(
+    "--type",
+    "media_type",
+    type=click.Choice(["track", "album", "playlist", "artist"], case_sensitive=False),
+    default="track",
+    show_default=True,
+    help="Type of an ID target; URLs detect their type automatically.",
 )
 @click.option(
     "--max-bit-depth",
@@ -622,36 +630,52 @@ async def search(ctx, first, output_file, num_results, source, media_type, query
     default=None,
     help="Allow or reject lossy fallback when no lossless candidate qualifies.",
 )
-@click.argument(
-    "source",
-    type=click.Choice(["tidal", "qobuz", "deezer"], case_sensitive=False),
-)
-@click.argument("track-id")
+@click.argument("source-or-url")
+@click.argument("item-id", required=False)
 @click.pass_context
 @coro
 async def compare_sources(
     ctx,
     download_best,
+    media_type,
     services,
     max_bit_depth,
     max_sample_rate,
     prefer_lossless,
     fallback_to_lossy,
-    source,
-    track_id,
+    source_or_url,
+    item_id,
 ):
-    """Compare a track across services; downloading is opt-in."""
+    """Compare a track or collection across services; downloading is opt-in."""
 
     from ..comparison import (
         MultiSourceComparator,
-        download_selected,
         format_quality,
+        resolve_comparison_collection,
         service_quality_for_ceiling,
     )
     from ..multisource import QualityCeiling, match_tracks, normalize_sample_rate
+    from .parse_url import GenericURL, parse_url
 
     if ctx.obj["config"] is None:
         return
+
+    if item_id is None:
+        parsed = parse_url(source_or_url)
+        if not isinstance(parsed, GenericURL):
+            raise click.UsageError(
+                "Provide SOURCE ITEM_ID or a Tidal, Qobuz, or Deezer URL."
+            )
+        source, detected_type, item_id = parsed.match.groups()
+        if detected_type == "mix":
+            detected_type = "playlist"
+        if detected_type not in {"track", "album", "playlist", "artist"}:
+            raise click.UsageError(f"Unsupported comparison URL type: {detected_type}")
+        media_type = detected_type
+    else:
+        source = source_or_url.lower()
+        if source not in {"tidal", "qobuz", "deezer"}:
+            raise click.UsageError("SOURCE must be tidal, qobuz, or deezer.")
 
     configured = tuple(dict.fromkeys(services or ("tidal", "qobuz", "deezer")))
     if source not in configured:
@@ -685,15 +709,22 @@ async def compare_sources(
         )
         async with Main(cfg) as main:
             reference_client = await main.get_logged_in_client(source)
+            collection = await resolve_comparison_collection(
+                reference_client, media_type, item_id
+            )
+            if not collection.track_ids:
+                console.print("[yellow]The collection contains no comparable tracks.[/yellow]")
+                return
+            if media_type != "track":
+                console.print(
+                    f"[bold cyan]{collection.name}[/bold cyan] — "
+                    f"{len(collection.track_ids)} track(s)"
+                )
             reference_quality = service_quality_for_ceiling(
                 source,
                 cfg.session.get_source(source).quality,
                 ceiling,
             )
-            reference_candidate = await reference_client.get_candidate(
-                track_id, reference_quality
-            )
-
             active_clients = {source: reference_client}
             login_errors = {}
             for service in configured:
@@ -714,20 +745,49 @@ async def compare_sources(
                 )
                 for service in active_clients
             }
-            report = await MultiSourceComparator(active_clients).compare(
-                reference_candidate.identity,
-                qualities,
-                reference_candidate=reference_candidate,
-                ceiling=ceiling,
-            )
-            report.errors.update(login_errors)
+            comparator = MultiSourceComparator(active_clients)
+            winners: dict[str, int] = {}
+            selected_tracks = []
+            for position, track_id in enumerate(collection.track_ids, start=1):
+                reference_candidate = await reference_client.get_candidate(
+                    track_id, reference_quality
+                )
+                report = await comparator.compare(
+                    reference_candidate.identity,
+                    qualities,
+                    reference_candidate=reference_candidate,
+                    ceiling=ceiling,
+                )
+                report.errors.update(login_errors)
+                if media_type != "track":
+                    console.print(
+                        f"\n[bold]Track {position}/{len(collection.track_ids)}:[/bold] "
+                        f"{reference_candidate.identity.artist} — "
+                        f"{reference_candidate.identity.title}"
+                    )
+                _print_comparison_report(report, format_quality, match_tracks)
+                if report.selected is not None:
+                    winner = report.selected.identity.source
+                    winners[winner] = winners.get(winner, 0) + 1
+                    selected_tracks.append(report.selected)
 
-            _print_comparison_report(report, format_quality, match_tracks)
-            if download_best and report.selected is not None:
-                selected = await download_selected(main, report)
+            if media_type != "track":
+                summary = ", ".join(
+                    f"{service}: {count}" for service, count in winners.items()
+                ) or "none"
+                console.print(f"\n[bold green]Collection winners:[/bold green] {summary}")
+
+            if download_best and selected_tracks:
+                for selected in selected_tracks:
+                    await main.add_by_id(
+                        selected.identity.source,
+                        "track",
+                        selected.identity.source_id,
+                    )
+                await main.resolve()
+                await main.rip()
                 console.print(
-                    f"[green]Downloaded best source:[/green] "
-                    f"{selected.identity.source}"
+                    f"[green]Downloaded {len(selected_tracks)} best-source track(s).[/green]"
                 )
 
 

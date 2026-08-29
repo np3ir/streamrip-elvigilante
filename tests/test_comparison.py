@@ -6,6 +6,7 @@ from streamrip.comparison import (
     MultiSourceComparator,
     download_selected,
     format_quality,
+    resolve_comparison_collection,
     search_items,
     service_quality_for_ceiling,
 )
@@ -112,6 +113,71 @@ def test_16_bit_ceiling_requests_cd_tiers_from_all_services():
     assert service_quality_for_ceiling("tidal", 4, ceiling) == 2
     assert service_quality_for_ceiling("qobuz", 4, ceiling) == 2
     assert service_quality_for_ceiling("deezer", 2, ceiling) == 2
+
+
+class MetadataClient:
+    source = "tidal"
+
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = []
+
+    async def get_metadata(self, item_id, media_type):
+        self.calls.append((item_id, media_type))
+        return self.responses[(item_id, media_type)]
+
+
+@pytest.mark.asyncio
+async def test_resolves_album_tracks_without_downloading():
+    client = MetadataClient(
+        {
+            ("a1", "album"): {
+                "title": "Album",
+                "tracks": [{"id": 1}, {"id": 2}],
+            }
+        }
+    )
+
+    collection = await resolve_comparison_collection(client, "album", "a1")
+
+    assert collection.name == "Album"
+    assert collection.track_ids == ["1", "2"]
+    assert client.calls == [("a1", "album")]
+
+
+@pytest.mark.asyncio
+async def test_resolves_playlist_track_container():
+    client = MetadataClient(
+        {
+            ("p1", "playlist"): {
+                "title": "Playlist",
+                "tracks": {"items": [{"id": "t1"}, {"id": "t2"}]},
+            }
+        }
+    )
+
+    collection = await resolve_comparison_collection(client, "playlist", "p1")
+
+    assert collection.track_ids == ["t1", "t2"]
+
+
+@pytest.mark.asyncio
+async def test_resolves_artist_albums_and_deduplicates_tracks_in_order():
+    client = MetadataClient(
+        {
+            ("ar1", "artist"): {
+                "name": "Artist",
+                "albums": [{"id": "a1"}, {"id": "a2"}],
+            },
+            ("a1", "album"): {"tracks": [{"id": "t1"}, {"id": "t2"}]},
+            ("a2", "album"): {"tracks": [{"id": "t2"}, {"id": "t3"}]},
+        }
+    )
+
+    collection = await resolve_comparison_collection(client, "artist", "ar1")
+
+    assert collection.name == "Artist"
+    assert collection.track_ids == ["t1", "t2", "t3"]
 
 
 @pytest.mark.asyncio

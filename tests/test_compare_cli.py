@@ -14,7 +14,11 @@ def test_compare_command_is_registered_with_safe_preview_help():
     assert "max_sample_rate" in [parameter.name for parameter in command.params]
     assert "prefer_lossless" in [parameter.name for parameter in command.params]
     assert "fallback_to_lossy" in [parameter.name for parameter in command.params]
-    assert [parameter.name for parameter in command.params][-2:] == ["source", "track_id"]
+    assert "media_type" in [parameter.name for parameter in command.params]
+    assert [parameter.name for parameter in command.params][-2:] == [
+        "source_or_url",
+        "item_id",
+    ]
 
 
 def test_help_invocation_is_detected_before_config_loading():
