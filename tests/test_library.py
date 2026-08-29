@@ -1,12 +1,16 @@
 import json
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from streamrip.config import Config
 from streamrip.library import (
     LibraryCheckpoint,
+    PendingLibraryTrack,
     iter_library_tracks,
     library_job_signature,
 )
+from streamrip.media.track import Track
 
 
 def track(track_id, isrc, album_id="a1", artists=None):
@@ -136,3 +140,112 @@ def test_checkpoint_file_contains_no_track_metadata(tmp_path):
     data = json.loads((tmp_path / "job.json").read_text(encoding="utf-8"))
 
     assert data == {"signature": "job", "completed": ["isrc:ONE"]}
+
+
+@pytest.mark.asyncio
+async def test_pending_library_track_combines_reference_metadata_with_winner_audio(
+    tmp_path,
+):
+    config = Config("tests/test_config.toml")
+    config.session.downloads.folder = str(tmp_path)
+    config.session.downloads.source_subdirectories = True
+    config.session.downloads.disc_subdirectories = False
+    reference = Mock(source="tidal", session=Mock())
+    reference.get_metadata = AsyncMock(return_value={"id": "t1"})
+    winner = Mock(source="deezer")
+    downloadable = Mock(source="deezer", extension="flac")
+    winner.get_downloadable = AsyncMock(return_value=downloadable)
+    album = Mock(disctotal=1, covers=Mock())
+    album.format_folder_path.return_value = "Canonical Artist/Canonical Album"
+    metadata = Mock(discnumber=1)
+    pending = PendingLibraryTrack(
+        "t1", reference, "d1", winner, 2, config, Mock()
+    )
+
+    with (
+        patch.object(
+            PendingLibraryTrack,
+            "_canonical_album",
+            new=AsyncMock(return_value=album),
+        ),
+        patch(
+            "streamrip.library.TrackMetadata.from_resp",
+            return_value=metadata,
+        ) as build_metadata,
+        patch(
+            "streamrip.library.download_artwork",
+            new=AsyncMock(return_value=("cover.jpg", None)),
+        ),
+        patch(
+            "streamrip.library.fetch_lrc",
+            new=AsyncMock(return_value="lyrics"),
+        ),
+    ):
+        resolved = await pending.resolve()
+
+    assert resolved.meta is metadata
+    assert resolved.downloadable is downloadable
+    assert resolved.cover_path == "cover.jpg"
+    assert resolved.lrc_content == "lyrics"
+    assert resolved.folder == str(
+        tmp_path / "Tidal" / "Canonical Artist" / "Canonical Album"
+    )
+    build_metadata.assert_called_once_with(album, "tidal", {"id": "t1"}, ", ")
+    winner.get_downloadable.assert_awaited_once_with("d1", 2)
+
+
+@pytest.mark.asyncio
+async def test_track_completion_callback_runs_for_verified_existing_file(tmp_path):
+    config = Config("tests/test_config.toml")
+    metadata = Mock(title="Canonical", artist="Artist", isrc="ISRC1")
+    metadata.info = Mock(id="t1", explicit=False)
+    metadata.format_track_path.return_value = "Canonical"
+    downloadable = Mock(source="deezer", extension="flac")
+    database = Mock()
+    database.downloaded.return_value = False
+    database.isrc_downloaded.return_value = False
+    completed = Mock()
+    (tmp_path / "Canonical.flac").write_bytes(b"existing")
+    item = Track(
+        metadata,
+        downloadable,
+        config,
+        str(tmp_path),
+        None,
+        database,
+        completion_callback=completed,
+    )
+
+    await item.rip()
+
+    completed.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_track_failure_does_not_advance_resume_checkpoint(tmp_path):
+    config = Config("tests/test_config.toml")
+    config.session.downloads.max_retries = 0
+    metadata = Mock(title="Canonical", artist="Artist", isrc="ISRC1")
+    metadata.info = Mock(id="t1", explicit=False)
+    metadata.format_track_path.return_value = "Canonical"
+    downloadable = Mock(source="deezer", extension="flac")
+    downloadable.size = AsyncMock(return_value=100)
+    downloadable.download = AsyncMock(side_effect=OSError("network failed"))
+    database = Mock()
+    database.isrc_downloaded.return_value = False
+    completed = Mock()
+    item = Track(
+        metadata,
+        downloadable,
+        config,
+        str(tmp_path),
+        None,
+        database,
+        completion_callback=completed,
+        failure_id="d1",
+    )
+
+    await item.rip()
+
+    completed.assert_not_called()
+    database.set_failed.assert_called_once_with("deezer", "track", "d1")

@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass
+from typing import Callable
 
 import aiohttp
 
@@ -38,6 +39,12 @@ class Track(Media):
     is_single: bool = False
     from_playlist: bool = False
     lrc_content: str | None = None
+    completion_callback: Callable[[], None] | None = None
+    failure_id: str | None = None
+
+    def _mark_complete(self):
+        if self.completion_callback is not None:
+            self.completion_callback()
 
     async def rip(self):
         await self.preprocess()
@@ -49,6 +56,7 @@ class Track(Media):
             if not self.db.downloaded(self.meta.info.id):
                 self.db.set_downloaded(self.meta.info.id)
             self.db.set_isrc_downloaded(self.meta.isrc)
+            self._mark_complete()
             if self.is_single: remove_title(self.meta.title)
             return
 
@@ -57,6 +65,7 @@ class Track(Media):
         isrc = self.meta.isrc
         if isrc and self.db.isrc_downloaded(isrc):
             console.print(f"[yellow]Skipped (ISRC, other source)[/]: {self.meta.title}")
+            self._mark_complete()
             if self.is_single: remove_title(self.meta.title)
             return
 
@@ -77,6 +86,7 @@ class Track(Media):
                 self.download_path, self.downloadable
             )
         await self.postprocess()
+        self._mark_complete()
 
     async def preprocess(self):
         self._set_download_path()
@@ -122,7 +132,11 @@ class Track(Media):
                             "Persistent error downloading '%s' after %d retries.",
                             display_title, max_retries,
                         )
-                        self.db.set_failed(self.downloadable.source, "track", self.meta.info.id)
+                        self.db.set_failed(
+                            self.downloadable.source,
+                            "track",
+                            self.failure_id or self.meta.info.id,
+                        )
 
     async def postprocess(self):
         if self.is_single: remove_title(self.meta.title)

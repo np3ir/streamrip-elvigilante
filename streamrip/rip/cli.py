@@ -1005,7 +1005,6 @@ async def library(
             winners: dict[str, int] = {}
             seen: set[str] = set()
             queued = []
-            completed_after_download = []
 
             console.print(
                 f"[bold cyan]Library job[/bold cyan] — {media_type} → {expansion}; "
@@ -1069,19 +1068,20 @@ async def library(
                 if dry_run:
                     checkpoint.mark_done(key)
                 else:
-                    queued.append(selected)
-                    completed_after_download.append(key)
+                    queued.append((track.source_id, selected, key))
 
             if queued:
-                for selected in queued:
-                    await main.add_by_id(
-                        selected.identity.source,
-                        "track",
-                        selected.identity.source_id,
+                for reference_id, selected, key in queued:
+                    winner = selected.identity.source
+                    await main.add_library_track(
+                        reference_id=reference_id,
+                        reference_client=reference_client,
+                        audio_id=selected.identity.source_id,
+                        audio_client=clients[winner],
+                        audio_quality=qualities[winner],
+                        completion_callback=lambda key=key: checkpoint.mark_done(key),
                     )
                 await main.rip()
-                for key in completed_after_download:
-                    checkpoint.mark_done(key)
 
             summary = ", ".join(
                 f"{service}: {count}" for service, count in winners.items()

@@ -398,7 +398,7 @@ Committed as `2fda1e0 feat: add assisted deezer browser login`, with documentati
 
 ## Resumable mass-library planner
 
-Implemented on 2026-08-28 after auditing `../tiddl-elvigilante` link-processing behavior; pending local checkpoint commit at the time of this memory update.
+Implemented on 2026-08-28 after auditing `../tiddl-elvigilante` link-processing behavior. Committed locally as `4d6c6c7 feat: add resumable multisource library planner`; no push occurred.
 
 - New `rip library URL` command accepts standard TIDAL, Qobuz, or Deezer track, album, playlist, artist, and mix links.
 - Playlist expansion modes mirror tiddl-elvigilante: `--tracks`, `--albums`, and `--artists`. Track mode deduplicates by normalized ISRC. Album/artist modes retain album-specific track keys so complete albums are not made incomplete by cross-album recording deduplication.
@@ -413,6 +413,19 @@ Implemented on 2026-08-28 after auditing `../tiddl-elvigilante` link-processing 
 
 ## Working tree expected at this handoff
 
-The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, ISRC-first comparison in `3d0d832`, explicit service-login commands in `72f1df0`, browser-assisted Deezer login in `2fda1e0`, restored standalone search in `73dbc30`, best-edition selection in `0b690b9`, hybrid TIDAL plus quality ceilings in `db3fbfd`, and persistent comparison policy in `9bbdb8a`. Collection/direct-URL comparison is implemented and pending its local checkpoint commit. No push occurred.
+The multi-source foundation is committed in `254c33c`, migration safety in `83a5f99`, opt-in best-source download in `16d01df`, TIDAL request/refresh safety in `90ac62a`, the 429 circuit breaker in `49fe134`, configuration-source correction in `8976012`, warning cleanup in `55ee197`, restored TIDAL device authentication in `541e9a3`, DASH initialization fix in `e76eaa5`, TIDAL single metadata correction in `97a2c2d`, ISRC-first comparison in `3d0d832`, explicit service-login commands in `72f1df0`, browser-assisted Deezer login in `2fda1e0`, restored standalone search in `73dbc30`, best-edition selection in `0b690b9`, hybrid TIDAL plus quality ceilings in `db3fbfd`, persistent comparison policy in `9bbdb8a`, collection/direct-URL comparison in `74fd70c`, configurable service priority in `6b8217e`, and the resumable mass-library planner in `4d6c6c7`. No push occurred.
+
+## Canonical library metadata with best-source audio
+
+Implemented on 2026-08-29 as the next phase of the mass-library planner.
+
+- Download-mode library jobs now keep the expanded source track as the canonical reference while obtaining the audio stream from the cross-service quality winner. With the recommended TIDAL-first setup, paths, tags, album edition, cover, and lyrics therefore remain TIDAL-derived even when Deezer or Qobuz supplies better audio.
+- Canonical album metadata is fetched from the reference album endpoint so album totals, disc layout, dates, artwork, and folder formatting are not taken from a possibly different winning-service edition. A summarized reference-track response is retained as a safe fallback if that album request is unavailable.
+- Source subdirectories identify the canonical library source, not the audio supplier. Multi-disc albums retain the configured disc-subdirectory behavior, while shared cover art is stored at the album root.
+- Resume checkpoints advance only after successful post-processing or when an exact-path/ISRC-existing file is verified. Failed transfers stay pending for the next `--resume` run.
+- Failure bookkeeping uses the actual audio supplier and its track ID, while successful library identity and deduplication remain tied to canonical metadata and ISRC.
+- Changed product files: `streamrip/library.py`, `streamrip/rip/main.py`, `streamrip/rip/cli.py`, and `streamrip/media/track.py`. Regression coverage is in `tests/test_library.py`.
+- Validation: focused library tests `10 passed`; full suite `194 passed, 7 skipped`; Ruff clean on all changed code/tests; `git diff --check` reported only informational Windows line-ending notices.
+- No real audio was downloaded during this phase. A small explicitly authorized live download remains desirable later to verify final directory, embedded tags, cover, lyrics, checkpoint advancement, and mixed-source failure recovery end to end.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.

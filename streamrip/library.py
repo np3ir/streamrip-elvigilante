@@ -4,17 +4,26 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import AsyncIterator, Iterable
+from typing import AsyncIterator, Callable, Iterable
 
 import click
 
 from .client.candidate import track_identity
-from .metadata import ArtistMetadata
+from .config import Config
+from .db import Database
+from .filepath_utils import clean_filepath
+from .media.artwork import download_artwork
+from .media.lyrics import fetch_lrc
+from .media.media import Pending
+from .media.track import Track
+from .metadata import AlbumMetadata, ArtistMetadata, TrackMetadata
 
 SUPPORTED_EXPANSIONS = ("tracks", "albums", "artists")
+logger = logging.getLogger("streamrip")
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +45,101 @@ class LibraryTrack:
         if expansion == "tracks":
             return self.recording_key
         return f"album:{self.album_id or 'unknown'}:track:{self.source_id}"
+
+
+@dataclass(slots=True)
+class PendingLibraryTrack(Pending):
+    """Reference metadata combined with audio from the selected service."""
+
+    reference_id: str
+    reference_client: object
+    audio_id: str
+    audio_client: object
+    audio_quality: int
+    config: Config
+    db: Database
+    completion_callback: Callable[[], None] | None = None
+
+    async def resolve(self) -> Track | None:
+        reference_source = self.reference_client.source
+        response = await self.reference_client.get_metadata(self.reference_id, "track")
+        separator = self.config.session.metadata.artist_separator
+        album = await self._canonical_album(response, separator)
+        metadata = TrackMetadata.from_resp(album, reference_source, response, separator)
+        if metadata is None:
+            return None
+
+        album_folder = self._canonical_folder(album, reference_source)
+        folder = album_folder
+        if (
+            self.config.session.downloads.disc_subdirectories
+            and album.disctotal > 1
+        ):
+            folder = os.path.join(folder, f"Disc {metadata.discnumber}")
+        os.makedirs(folder, exist_ok=True)
+
+        downloadable = await self.audio_client.get_downloadable(
+            self.audio_id, self.audio_quality
+        )
+        cover_path, _ = await download_artwork(
+            self.reference_client.session,
+            album_folder,
+            album.covers,
+            self.config.session.artwork,
+            for_playlist=False,
+        )
+        lyrics = await fetch_lrc(self.reference_client, self.reference_id, self.config)
+        return Track(
+            metadata,
+            downloadable,
+            self.config,
+            folder,
+            cover_path,
+            self.db,
+            lrc_content=lyrics,
+            completion_callback=self.completion_callback,
+            failure_id=self.audio_id,
+        )
+
+    async def _canonical_album(
+        self, response: dict, artist_separator: str
+    ) -> AlbumMetadata:
+        source = self.reference_client.source
+        album_id = (response.get("album") or {}).get("id")
+        if album_id:
+            try:
+                album_response = await self.reference_client.get_metadata(
+                    str(album_id), "album"
+                )
+                full_album = AlbumMetadata.from_album_resp(
+                    album_response, source, artist_separator
+                )
+                if full_album is not None:
+                    return full_album
+            except Exception as error:
+                # A summarized track remains a safe metadata fallback when a
+                # region-specific full album endpoint is unavailable.
+                logger.debug(
+                    "Could not resolve canonical %s album %s: %s",
+                    source,
+                    album_id,
+                    error,
+                )
+        album = AlbumMetadata.from_track_resp(
+            response, source, artist_separator
+        )
+        if album is None:
+            raise ValueError(f"No canonical album metadata for {self.reference_id}")
+        return album
+
+    def _canonical_folder(self, album: AlbumMetadata, source: str) -> str:
+        config = self.config.session
+        parent = config.downloads.folder
+        if config.downloads.source_subdirectories:
+            parent = os.path.join(parent, source.capitalize())
+        formatted = album.format_folder_path(config.filepaths.folder_format)
+        folder = clean_filepath(formatted, config.filepaths.restrict_characters)
+        return os.path.join(parent, folder[:150].rstrip())
 
 
 def _items(response: dict) -> list[dict]:

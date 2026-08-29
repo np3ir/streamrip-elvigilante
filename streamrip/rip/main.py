@@ -5,6 +5,7 @@ import os
 import platform
 import re
 import sys
+from typing import Callable
 
 import aiofiles
 
@@ -157,6 +158,33 @@ class Main:
         }
         for source, media_type, item_id in info:
             await self._queue_by_id(clients[source], media_type, item_id)
+
+    async def add_library_track(
+        self,
+        *,
+        reference_id: str,
+        reference_client: Client,
+        audio_id: str,
+        audio_client: Client,
+        audio_quality: int,
+        completion_callback: Callable[[], None] | None = None,
+    ):
+        """Queue winner audio while retaining reference-service metadata."""
+
+        from ..library import PendingLibraryTrack
+
+        await self.queue.put(
+            PendingLibraryTrack(
+                reference_id,
+                reference_client,
+                audio_id,
+                audio_client,
+                audio_quality,
+                self.config,
+                self.database,
+                completion_callback,
+            )
+        )
 
     async def _queue_by_id(self, client: Client, media_type: str, item_id: str):
         if media_type == "track":
