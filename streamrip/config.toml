@@ -43,6 +43,10 @@ prefer_lossless = true
 fallback_to_lossy = true
 # Tie-break order after delivered audio quality is equal.
 service_priority = ["tidal", "deezer", "qobuz"]
+# Conservative number of simultaneous cross-service comparisons (1-8).
+library_workers = 2
+# Write a private JSONL audit manifest for library jobs.
+library_manifest = true
 
 [qobuz]
 # 1: 320kbps MP3, 2: 16/44.1, 3: 24/<=96, 4: 24/>=96

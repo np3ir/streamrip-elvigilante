@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import os
+from collections import deque
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import AsyncIterator, Callable, Iterable
+from typing import AsyncIterator, Awaitable, Callable, Iterable, TypeVar
 
 import click
 
@@ -24,6 +27,8 @@ from .metadata import AlbumMetadata, ArtistMetadata, TrackMetadata
 
 SUPPORTED_EXPANSIONS = ("tracks", "albums", "artists")
 logger = logging.getLogger("streamrip")
+T = TypeVar("T")
+R = TypeVar("R")
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,8 +64,8 @@ class PendingLibraryTrack(Pending):
     audio_quality: int
     config: Config
     db: Database
-    completion_callback: Callable[[], None] | None = None
-    failure_callback: Callable[[], None] | None = None
+    completion_callback: Callable[[str], None] | None = None
+    failure_callback: Callable[[str], None] | None = None
 
     async def resolve(self) -> Track | None:
         reference_source = self.reference_client.source
@@ -301,6 +306,63 @@ class LibraryCheckpoint:
             os.replace(temporary, self.path)
         except OSError:
             pass
+
+
+class LibraryManifest:
+    """Append-only, credential-free JSONL audit log for one library job."""
+
+    def __init__(
+        self,
+        signature: str,
+        path: Path | None = None,
+        directory: Path | None = None,
+    ):
+        base = directory or Path(click.get_app_dir("streamrip")) / "library-manifests"
+        self.path = path or base / f"{signature}.jsonl"
+        self.signature = signature
+
+    def record(self, status: str, **fields) -> None:
+        event = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "signature": self.signature,
+            "status": status,
+            **fields,
+        }
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(
+                    json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+                )
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError as error:
+            logger.warning("Could not write library manifest %s: %s", self.path, error)
+
+
+async def bounded_ordered_map(
+    items: AsyncIterator[T],
+    worker: Callable[[T], Awaitable[R]],
+    limit: int,
+) -> AsyncIterator[R]:
+    """Run at most ``limit`` tasks concurrently and yield in input order."""
+
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    pending: deque[asyncio.Task[R]] = deque()
+    try:
+        async for item in items:
+            pending.append(asyncio.create_task(worker(item)))
+            if len(pending) >= limit:
+                yield await pending.popleft()
+        while pending:
+            yield await pending.popleft()
+    finally:
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
 
 def track_asdict(track: LibraryTrack) -> dict:

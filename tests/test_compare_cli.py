@@ -31,6 +31,9 @@ def test_library_command_registers_mass_processing_safety_options():
     assert "dry_run" in names
     assert "resume" in names
     assert "max_tracks" in names
+    assert "workers" in names
+    assert "manifest" in names
+    assert "manifest_path" in names
 
 
 def test_help_invocation_is_detected_before_config_loading():

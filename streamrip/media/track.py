@@ -39,13 +39,13 @@ class Track(Media):
     is_single: bool = False
     from_playlist: bool = False
     lrc_content: str | None = None
-    completion_callback: Callable[[], None] | None = None
-    failure_callback: Callable[[], None] | None = None
+    completion_callback: Callable[[str], None] | None = None
+    failure_callback: Callable[[str], None] | None = None
     failure_id: str | None = None
 
     def _mark_complete(self):
         if self.completion_callback is not None:
-            self.completion_callback()
+            self.completion_callback(self.download_path)
 
     async def rip(self):
         await self.preprocess()
@@ -139,7 +139,7 @@ class Track(Media):
                             self.failure_id or self.meta.info.id,
                         )
                         if self.failure_callback is not None:
-                            self.failure_callback()
+                            self.failure_callback(self.download_path)
 
     async def postprocess(self):
         if self.is_single: remove_title(self.meta.title)

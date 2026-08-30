@@ -167,8 +167,8 @@ class Main:
         audio_id: str,
         audio_client: Client,
         audio_quality: int,
-        completion_callback: Callable[[], None] | None = None,
-        failure_callback: Callable[[], None] | None = None,
+        completion_callback: Callable[[str], None] | None = None,
+        failure_callback: Callable[[str], None] | None = None,
     ):
         """Queue winner audio while retaining reference-service metadata."""
 
@@ -338,7 +338,7 @@ class Main:
                         pending_item, "failure_callback", None
                     )
                     if failure_callback is not None:
-                        failure_callback()
+                        failure_callback("")
                     # DEBUG: identify what object was skipped
                     pid = getattr(pending_item, "id", None)
                     src = getattr(pending_item, "client", None)
@@ -355,7 +355,7 @@ class Main:
                 self.skipped_items += 1
                 failure_callback = getattr(pending_item, "failure_callback", None)
                 if failure_callback is not None:
-                    failure_callback()
+                    failure_callback("")
                 # DEBUG: identify the exact pending object that caused the exception
                 pid = getattr(pending_item, "id", None)
                 src = getattr(pending_item, "client", None)

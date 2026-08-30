@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 from functools import wraps
+from pathlib import Path
 from typing import Any
 
 import aiofiles
@@ -889,6 +890,12 @@ async def id(ctx, source, media_type, id):
               help="Skip track keys completed by the same URL and policy.")
 @click.option("--max-tracks", type=click.IntRange(min=0), default=0,
               help="Stop after this many new tracks; zero means unlimited.")
+@click.option("--workers", type=click.IntRange(min=1, max=8),
+              help="Concurrent comparisons; defaults to comparison.library_workers.")
+@click.option("--manifest/--no-manifest", default=None,
+              help="Write a credential-free JSONL audit manifest.")
+@click.option("--manifest-path", type=click.Path(path_type=Path, dir_okay=False),
+              help="Override the audit manifest path for this job.")
 @click.option(
     "--priority", "service_priority", multiple=True,
     type=click.Choice(["tidal", "qobuz", "deezer"], case_sensitive=False),
@@ -911,6 +918,9 @@ async def library(
     dry_run,
     resume,
     max_tracks,
+    workers,
+    manifest,
+    manifest_path,
     service_priority,
     max_bit_depth,
     max_sample_rate,
@@ -922,6 +932,8 @@ async def library(
     from ..comparison import MultiSourceComparator, service_quality_for_ceiling
     from ..library import (
         LibraryCheckpoint,
+        LibraryManifest,
+        bounded_ordered_map,
         iter_library_tracks,
         library_job_signature,
     )
@@ -954,6 +966,10 @@ async def library(
         priority = tuple(
             dict.fromkeys((*service_priority, *policy.service_priority))
         )
+        comparison_workers = workers or policy.library_workers
+        manifest_enabled = (
+            policy.library_manifest if manifest is None else manifest
+        ) or manifest_path is not None
         signature = library_job_signature(
             {
                 "url": url.strip(),
@@ -967,6 +983,11 @@ async def library(
             }
         )
         checkpoint = LibraryCheckpoint(signature).load()
+        audit = (
+            LibraryManifest(signature, path=manifest_path)
+            if manifest_enabled
+            else None
+        )
         if resume and checkpoint.completed:
             console.print(
                 f"[dim]Resume checkpoint: {len(checkpoint.completed)} completed key(s).[/dim]"
@@ -1007,28 +1028,32 @@ async def library(
             seen: set[str] = set()
             queued = []
 
-            def mark_download_failed():
-                nonlocal failed
-                failed += 1
-
             console.print(
                 f"[bold cyan]Library job[/bold cyan] — {media_type} → {expansion}; "
-                f"mode={'preview' if dry_run else 'download'}; signature={signature}"
+                f"mode={'preview' if dry_run else 'download'}; "
+                f"workers={comparison_workers}; signature={signature}"
             )
-            async for track in iter_library_tracks(
-                reference_client, media_type, item_id, expansion
-            ):
-                key = track.job_key(expansion)
-                if key in seen:
-                    skipped_duplicate += 1
-                    continue
-                seen.add(key)
-                if resume and checkpoint.is_done(key):
-                    skipped_resume += 1
-                    continue
-                if max_tracks and attempted >= max_tracks:
-                    break
-                attempted += 1
+
+            async def eligible_tracks():
+                nonlocal attempted, skipped_duplicate, skipped_resume
+                async for track in iter_library_tracks(
+                    reference_client, media_type, item_id, expansion
+                ):
+                    key = track.job_key(expansion)
+                    if key in seen:
+                        skipped_duplicate += 1
+                        continue
+                    seen.add(key)
+                    if resume and checkpoint.is_done(key):
+                        skipped_resume += 1
+                        continue
+                    if max_tracks and attempted >= max_tracks:
+                        break
+                    attempted += 1
+                    yield track, key
+
+            async def compare_track(item):
+                track, key = item
                 try:
                     reference_downloadable = await reference_client.get_downloadable(
                         track.source_id, reference_quality
@@ -1045,11 +1070,29 @@ async def library(
                         ceiling=ceiling,
                     )
                 except Exception as error:
+                    return track, key, None, error
+                return track, key, report, None
+
+            async for track, key, report, error in bounded_ordered_map(
+                eligible_tracks(), compare_track, comparison_workers
+            ):
+                if error is not None:
                     failed += 1
                     console.print(
                         f"[red]FAILED[/red] {track.artist} — {track.title}: "
                         f"{type(error).__name__}: {error}"
                     )
+                    if audit is not None:
+                        audit.record(
+                            "failed",
+                            key=key,
+                            reference_source=track.source,
+                            reference_id=track.source_id,
+                            isrc=track.isrc,
+                            title=track.title,
+                            artist=track.artist,
+                            error_type=type(error).__name__,
+                        )
                     continue
                 processed += 1
                 selected = report.selected
@@ -1059,6 +1102,16 @@ async def library(
                         f"[{processed}] [yellow]NO MATCH[/yellow] "
                         f"{track.artist} — {track.title}"
                     )
+                    if audit is not None:
+                        audit.record(
+                            "no_match",
+                            key=key,
+                            reference_source=track.source,
+                            reference_id=track.source_id,
+                            isrc=track.isrc,
+                            title=track.title,
+                            artist=track.artist,
+                        )
                     continue
                 winner = selected.identity.source
                 winners[winner] = winners.get(winner, 0) + 1
@@ -1077,19 +1130,96 @@ async def library(
                 )
                 if dry_run:
                     checkpoint.mark_done(key)
+                    if audit is not None:
+                        audit.record(
+                            "previewed",
+                            key=key,
+                            reference_source=track.source,
+                            reference_id=track.source_id,
+                            isrc=track.isrc,
+                            title=track.title,
+                            artist=track.artist,
+                            audio_source=winner,
+                            audio_id=selected.identity.source_id,
+                            codec=quality.codec,
+                            lossless=quality.lossless,
+                            bit_depth=quality.bit_depth,
+                            sample_rate_hz=quality.sample_rate_hz,
+                        )
                 else:
-                    queued.append((track.source_id, selected, key))
+                    if audit is not None:
+                        audit.record(
+                            "selected",
+                            key=key,
+                            reference_source=track.source,
+                            reference_id=track.source_id,
+                            isrc=track.isrc,
+                            title=track.title,
+                            artist=track.artist,
+                            audio_source=winner,
+                            audio_id=selected.identity.source_id,
+                            codec=quality.codec,
+                            lossless=quality.lossless,
+                            bit_depth=quality.bit_depth,
+                            sample_rate_hz=quality.sample_rate_hz,
+                        )
+                    queued.append((track, selected, key))
 
             if queued:
-                for reference_id, selected, key in queued:
+                for track, selected, key in queued:
                     winner = selected.identity.source
+
+                    def mark_completed(path, *, track=track, selected=selected, key=key):
+                        checkpoint.mark_done(key)
+                        if audit is not None:
+                            audit.record(
+                                "completed",
+                                key=key,
+                                reference_source=track.source,
+                                reference_id=track.source_id,
+                                isrc=track.isrc,
+                                title=track.title,
+                                artist=track.artist,
+                                audio_source=selected.identity.source,
+                                audio_id=selected.identity.source_id,
+                                codec=selected.quality.codec,
+                                lossless=selected.quality.lossless,
+                                bit_depth=selected.quality.bit_depth,
+                                sample_rate_hz=selected.quality.sample_rate_hz,
+                                path=path,
+                            )
+
+                    def mark_download_failed(
+                        path, *, track=track, selected=selected, key=key
+                    ):
+                        nonlocal failed
+                        failed += 1
+                        if audit is not None:
+                            audit.record(
+                                "failed",
+                                key=key,
+                                reference_source=track.source,
+                                reference_id=track.source_id,
+                                isrc=track.isrc,
+                                title=track.title,
+                                artist=track.artist,
+                                audio_source=selected.identity.source,
+                                audio_id=selected.identity.source_id,
+                                codec=selected.quality.codec,
+                                lossless=selected.quality.lossless,
+                                bit_depth=selected.quality.bit_depth,
+                                sample_rate_hz=selected.quality.sample_rate_hz,
+                                path=path or None,
+                                error_type="download_or_processing",
+                            )
+
                     await main.add_library_track(
-                        reference_id=reference_id,
+                        reference_id=track.source_id,
                         reference_client=reference_client,
                         audio_id=selected.identity.source_id,
                         audio_client=clients[winner],
                         audio_quality=qualities[winner],
-                        completion_callback=lambda key=key: checkpoint.mark_done(key),
+                        completion_callback=mark_completed,
                         failure_callback=mark_download_failed,
                     )
                 await main.rip()
@@ -1104,6 +1234,8 @@ async def library(
             )
             for service, error in unavailable.items():
                 console.print(f"[yellow]{service} unavailable:[/yellow] {error}")
+            if audit is not None:
+                console.print(f"[dim]Manifest: {audit.path}[/dim]")
 
 
 

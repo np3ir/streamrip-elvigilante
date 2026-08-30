@@ -294,6 +294,8 @@ def test_comparison_policy_backfills_and_persists(tmp_path):
     config.file.comparison.max_sample_rate = 44.1
     config.file.comparison.fallback_to_lossy = False
     config.file.comparison.service_priority = ["deezer", "tidal", "qobuz"]
+    config.file.comparison.library_workers = 4
+    config.file.comparison.library_manifest = False
     config.file.set_modified()
     config.save_file()
 
@@ -306,6 +308,8 @@ def test_comparison_policy_backfills_and_persists(tmp_path):
         "tidal",
         "qobuz",
     ]
+    assert reloaded.session.comparison.library_workers == 4
+    assert reloaded.session.comparison.library_manifest is False
 
 
 def test_config_update_on_save():

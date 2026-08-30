@@ -7,7 +7,9 @@ import pytest
 from streamrip.config import Config
 from streamrip.library import (
     LibraryCheckpoint,
+    LibraryManifest,
     PendingLibraryTrack,
+    bounded_ordered_map,
     iter_library_tracks,
     library_job_signature,
 )
@@ -221,7 +223,7 @@ async def test_track_completion_callback_runs_for_verified_existing_file(tmp_pat
 
     await item.rip()
 
-    completed.assert_called_once_with()
+    completed.assert_called_once_with(str(tmp_path / "Canonical.flac"))
 
 
 @pytest.mark.asyncio
@@ -253,7 +255,7 @@ async def test_track_failure_does_not_advance_resume_checkpoint(tmp_path):
     await item.rip()
 
     completed.assert_not_called()
-    failed.assert_called_once_with()
+    failed.assert_called_once_with(str(tmp_path / "Canonical.flac"))
     database.set_failed.assert_called_once_with("deezer", "track", "d1")
 
 
@@ -282,5 +284,48 @@ async def test_worker_reports_each_library_failure_once(failure_stage):
     with pytest.raises(asyncio.CancelledError):
         await worker
 
-    failed.assert_called_once_with()
+    failed.assert_called_once_with("")
     assert main.skipped_items == 1
+
+
+@pytest.mark.asyncio
+async def test_bounded_ordered_map_preserves_order_and_limit():
+    active = 0
+    maximum = 0
+
+    async def items():
+        for value in range(8):
+            yield value
+
+    async def worker(value):
+        nonlocal active, maximum
+        active += 1
+        maximum = max(maximum, active)
+        await asyncio.sleep((8 - value) / 1000)
+        active -= 1
+        return value
+
+    result = [item async for item in bounded_ordered_map(items(), worker, 3)]
+
+    assert result == list(range(8))
+    assert maximum == 3
+
+
+def test_manifest_is_jsonl_and_excludes_unrequested_fields(tmp_path):
+    manifest = LibraryManifest("job", directory=tmp_path)
+    manifest.record(
+        "completed",
+        key="isrc:ONE",
+        reference_source="tidal",
+        audio_source="deezer",
+        path="Music/Track.flac",
+    )
+
+    lines = manifest.path.read_text(encoding="utf-8").splitlines()
+    event = json.loads(lines[0])
+    assert len(lines) == 1
+    assert event["signature"] == "job"
+    assert event["status"] == "completed"
+    assert event["key"] == "isrc:ONE"
+    assert "credentials" not in event
+    assert "reference_metadata" not in event

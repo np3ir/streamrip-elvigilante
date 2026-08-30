@@ -101,6 +101,8 @@ class ComparisonConfig:
     service_priority: list[str] = dataclass_field(
         default_factory=lambda: ["tidal", "deezer", "qobuz"]
     )
+    library_workers: int = 2
+    library_manifest: bool = True
 
 
 @dataclass(slots=True)
@@ -301,6 +303,12 @@ class ConfigData:
             comparison.max_bit_depth = 0
         if comparison.max_sample_rate < 0:
             comparison.max_sample_rate = 0.0
+        try:
+            comparison.library_workers = min(
+                8, max(1, int(comparison.library_workers))
+            )
+        except (TypeError, ValueError):
+            comparison.library_workers = 2
         valid_services = ("tidal", "deezer", "qobuz")
         configured_priority = [
             str(service).lower()
