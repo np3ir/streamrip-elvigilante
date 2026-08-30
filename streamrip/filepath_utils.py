@@ -2,7 +2,7 @@ import os
 import re
 import unicodedata
 
-from pathvalidate import sanitize_filename, sanitize_filepath
+from pathvalidate import sanitize_filename
 
 # Unicode dash/hyphen lookalikes -> ASCII hyphen. Services sometimes use these
 # instead of "-"; normalizing keeps filenames identical across sources (Tidal,
@@ -14,13 +14,13 @@ _DASH_TO_HYPHEN = str.maketrans({
 })
 
 
-def truncate_str(text: str) -> str:
+def truncate_str(text: str, max_bytes: int = 240) -> str:
     """
     Safely truncate a string to 240 bytes to stay within Windows path limits.
     """
     str_bytes = text.encode("utf-8")
-    if len(str_bytes) > 240:
-        str_bytes = str_bytes[:240]
+    if len(str_bytes) > max_bytes:
+        str_bytes = str_bytes[:max_bytes]
     return str_bytes.decode("utf-8", errors="ignore")
 
 
@@ -70,7 +70,9 @@ def _normalize_initial_folder_component(component: str) -> str:
     return component
 
 
-def clean_filename(fn: str, restrict: bool = False) -> str:
+def clean_filename(
+    fn: str, restrict: bool = False, *, max_bytes: int = 240
+) -> str:
     """
     Clean a track filename for safe filesystem usage.
     """
@@ -86,7 +88,7 @@ def clean_filename(fn: str, restrict: bool = False) -> str:
         fn = fn.replace(char, replacement)
 
     path = str(sanitize_filename(fn))
-    path = truncate_str(path)
+    path = truncate_str(path, max_bytes)
     path = re.sub(r"\s+", " ", path).strip()
     path = path.rstrip(". ")
 
@@ -97,35 +99,34 @@ def clean_filepath(fn: str, restrict: bool = False) -> str:
     """
     Clean a full directory path for safe filesystem usage.
     """
-    fn = remove_zalgo(fn)
-    fn = unicodedata.normalize("NFC", fn)
-    fn = fn.translate(_DASH_TO_HYPHEN)
-
-    replacements = {
-        ":": "：", "<": "＜", ">": "＞", '"': "＂",
-        "|": "｜", "?": "？", "*": "＊",
-    }
-    for char, replacement in replacements.items():
-        fn = fn.replace(char, replacement)
-
-    path = str(sanitize_filepath(fn))
-    path = re.sub(r"\s+", " ", path).strip()
-    path = path.rstrip(". ")
-
-    parts = re.split(r"[\\/]+", path)
+    fn = unicodedata.normalize("NFC", remove_zalgo(fn)).translate(_DASH_TO_HYPHEN)
+    is_unc = fn.startswith(("//", "\\\\"))
+    is_absolute = fn.startswith(("/", "\\")) and not is_unc
+    drive, remainder = os.path.splitdrive(fn)
+    path_body = remainder if drive else fn
+    parts = [part for part in re.split(r"[\\/]+", path_body) if part]
+    parts = [clean_filename(part, restrict, max_bytes=255) for part in parts]
     if parts:
         parts[0] = _normalize_initial_folder_component(parts[0])
 
     path = os.sep.join(parts)
-    return path
+    if drive:
+        path = drive + os.sep + path if path else drive + os.sep
+    elif is_unc:
+        path = os.sep * 2 + path
+    elif is_absolute:
+        path = os.sep + path
+    return os.path.normpath(path) if path else "."
 
 
-def truncate_filepath_to_max(path: str, max_length: int = 240) -> str:
+def truncate_filepath_to_max(path: str, max_length: int = 4000) -> str:
     """
     Truncate *path* so that its UTF-8 byte length does not exceed *max_length*.
     Uses byte counting (like tiddl) instead of character counting, which is
     correct for Unicode-heavy filenames on Windows / Linux.
-    Default: 240 bytes — safe margin below the 255-byte NTFS component limit.
+    Default: 4000 bytes, matching tiddl's PATH_MAX-oriented total-path policy.
+    Individual components are constrained separately by ``clean_filename`` and
+    ``clean_filepath``.
     """
     if len(path.encode("utf-8")) <= max_length:
         return path

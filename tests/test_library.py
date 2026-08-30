@@ -331,3 +331,20 @@ def test_manifest_is_jsonl_and_excludes_unrequested_fields(tmp_path):
     assert event["key"] == "isrc:ONE"
     assert "credentials" not in event
     assert "reference_metadata" not in event
+
+
+def test_canonical_folder_does_not_truncate_the_relative_hierarchy(tmp_path):
+    config = Config("tests/test_config.toml")
+    config.session.downloads.folder = str(tmp_path)
+    config.session.downloads.source_subdirectories = False
+    pending = PendingLibraryTrack(
+        "t1", Mock(source="tidal"), "d1", Mock(), 2, config, Mock()
+    )
+    relative = os.path.join("Artist", "A" * 180, "Album")
+    album = Mock()
+    album.format_folder_path.return_value = relative
+
+    result = pending._canonical_folder(album, "tidal")
+
+    assert result == os.path.join(str(tmp_path), relative)
+    assert result.endswith(os.path.join("A" * 180, "Album"))
