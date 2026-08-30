@@ -22,6 +22,7 @@ from Cryptodome.Util import Counter
 
 from .. import converter
 from ..exceptions import NonStreamableError
+from ..file_publish import PublishError, publish_verified_file
 
 logger = logging.getLogger("streamrip")
 
@@ -88,7 +89,25 @@ class Downloadable(ABC):
     _size_base: Optional[int] = None
 
     async def download(self, path: str, callback: Callable[[int], Any]):
-        await self._download(path, callback)
+        suffix = f".{self.extension}" if self.extension else ".media"
+        descriptor, stage = tempfile.mkstemp(prefix="streamrip-stage-", suffix=suffix)
+        os.close(descriptor)
+        try:
+            await self._download(stage, callback)
+            if not os.path.isfile(stage) or os.path.getsize(stage) <= 0:
+                raise NonStreamableError("Downloaded staging file is missing or empty")
+            await publish_verified_file(stage, path)
+        except PublishError:
+            # A valid stage is intentionally retained for manual recovery.
+            raise
+        except Exception:
+            # Invalid/incomplete downloads are disposable.
+            for incomplete in (stage, stage + ".part"):
+                try:
+                    os.remove(incomplete)
+                except FileNotFoundError:
+                    pass
+            raise
 
     async def size(self) -> int:
         if hasattr(self, "_size") and self._size is not None:

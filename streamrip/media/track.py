@@ -13,6 +13,7 @@ from ..config import Config
 from ..console import console
 from ..db import Database
 from ..exceptions import NonStreamableError
+from ..file_publish import PublishError
 
 # --- IMPORTAMOS LA NUEVA FUNCIÓN ---
 from ..filepath_utils import clean_filename, clean_track_title, truncate_filepath_to_max
@@ -120,6 +121,16 @@ class Track(Media):
                 except asyncio.CancelledError:
                     # Propagate cancellations so higher-level logic can abort cleanly
                     raise
+                except PublishError as error:
+                    logger.error("Verified media could not be published: %s", error)
+                    self.db.set_failed(
+                        self.downloadable.source,
+                        "track",
+                        self.failure_id or self.meta.info.id,
+                    )
+                    if self.failure_callback is not None:
+                        self.failure_callback(self.download_path)
+                    return
                 except (aiohttp.ClientError, OSError, asyncio.TimeoutError) as e:
                     if attempt <= max_retries:
                         wait = min(max_wait, retry_delay * (2 ** (attempt - 1)))

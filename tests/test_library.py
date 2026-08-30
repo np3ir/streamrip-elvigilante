@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from streamrip.config import Config
+from streamrip.file_publish import PublishError
 from streamrip.library import (
     LibraryCheckpoint,
     LibraryManifest,
@@ -259,6 +260,45 @@ async def test_track_failure_does_not_advance_resume_checkpoint(tmp_path):
     completed.assert_not_called()
     failed.assert_called_once_with(str(tmp_path / "Canonical.flac"))
     database.set_failed.assert_called_once_with("deezer", "track", "d1")
+
+
+@pytest.mark.asyncio
+async def test_publish_failure_is_not_redownloaded_and_keeps_checkpoint_pending(
+    tmp_path,
+):
+    config = Config("tests/test_config.toml")
+    config.session.downloads.max_retries = 3
+    metadata = Mock(title="Canonical", artist="Artist", isrc="ISRC1")
+    metadata.info = Mock(id="t1", explicit=False)
+    metadata.format_track_path.return_value = "Canonical"
+    retained = tmp_path / "verified-stage.flac"
+    downloadable = Mock(source="tidal", extension="flac")
+    downloadable.size = AsyncMock(return_value=100)
+    downloadable.download = AsyncMock(
+        side_effect=PublishError("destination unavailable", retained)
+    )
+    database = Mock()
+    database.isrc_downloaded.return_value = False
+    completed = Mock()
+    failed = Mock()
+    item = Track(
+        metadata,
+        downloadable,
+        config,
+        str(tmp_path),
+        None,
+        database,
+        completion_callback=completed,
+        failure_callback=failed,
+        failure_id="winner1",
+    )
+
+    await item.rip()
+
+    downloadable.download.assert_awaited_once()
+    completed.assert_not_called()
+    failed.assert_called_once_with(str(tmp_path / "Canonical.flac"))
+    database.set_failed.assert_called_once_with("tidal", "track", "winner1")
 
 
 @pytest.mark.asyncio
