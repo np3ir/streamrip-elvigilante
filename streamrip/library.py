@@ -147,7 +147,7 @@ class PendingLibraryTrack(Pending):
             parent = os.path.join(parent, source.capitalize())
         formatted = album.format_folder_path(config.filepaths.folder_format)
         folder = clean_filepath(formatted, config.filepaths.restrict_characters)
-        return os.path.join(parent, folder[:150].rstrip())
+        return os.path.normpath(os.path.join(parent, folder[:150].rstrip()))
 
 
 def _items(response: dict) -> list[dict]:

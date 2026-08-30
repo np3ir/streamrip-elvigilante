@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -195,6 +196,7 @@ async def test_pending_library_track_combines_reference_metadata_with_winner_aud
     assert resolved.folder == str(
         tmp_path / "Tidal" / "Canonical Artist" / "Canonical Album"
     )
+    assert resolved.folder == os.path.normpath(resolved.folder)
     build_metadata.assert_called_once_with(album, "tidal", {"id": "t1"}, ", ")
     winner.get_downloadable.assert_awaited_once_with("d1", 2)
 
