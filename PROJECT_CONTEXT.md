@@ -467,4 +467,13 @@ Implemented on 2026-08-29 as the next phase of the mass-library planner.
 - Validation before the final documentation update: focused tests `32 passed`; full suite `199 passed, 7 skipped`; Ruff clean; `git diff --check` reported only informational Windows line-ending notices. No real service request or media download was performed.
 - Next controlled live test requires explicit notice to the user first: preview a very small bounded job to verify actual request concurrency/order and inspect its manifest, then separately authorize any download-mode validation.
 
+### Authorized live concurrent preview
+
+- On 2026-08-30 the user authorized a metadata/manifest-only live test against TIDAL playlist `cd353f9c-d621-44b9-aa6e-a0497541d908`: track expansion, dry-run, three attempted tracks, two comparison workers, and an isolated manifest path. No audio was downloaded and global `rip 2.1.0` was not invoked.
+- The command completed in source order 1–3 with `processed=3`, `attempted=3`, `failed=0`, no duplicates, no resume skips, and no HTTP 429/circuit-breaker event. Deezer won tracks 1 and 3 at delivered FLAC/lossless/16-bit/44.1 kHz. TIDAL was the only eligible winner for track 2 and delivered lossy `mp4a.40.2`, correctly accepted by the configured lossy fallback policy.
+- Qobuz login was rejected for comparison with `IneligibleError: Free accounts are not eligible to download tracks`; therefore this run effectively compared TIDAL and Deezer. Restoring an eligible Qobuz subscription/session is required for a true three-service live validation.
+- The isolated JSONL manifest contains exactly three `previewed` events in source order. Each records canonical TIDAL ID/ISRC, selected audio service/ID, codec, lossless state, bit depth, and sample rate. A structural scan found no token, password, secret, ARL, credential, cookie, or email key.
+- Checkpoint signature `292f7b1b6334af8c6b48` contains exactly the three completed ISRC keys and no track metadata or credentials. The isolated manifest is stored privately as `live-audit-3-tracks.jsonl` in the Streamrip app-data `library-manifests` directory.
+- TIDAL primary/fallback session refreshes completed normally. The next real download test must be separately authorized and should remain limited to one track; a three-service test should wait until Qobuz eligibility is restored unless the purpose is explicitly to verify two-service fallback.
+
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
