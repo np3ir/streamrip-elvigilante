@@ -1,8 +1,10 @@
+import asyncio
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
-from streamrip.rip.cli import _is_help_invocation, rip
+from streamrip.rip.cli import _get_logged_in_client_bounded, _is_help_invocation, rip
 
 
 def test_compare_command_is_registered_with_safe_preview_help():
@@ -96,3 +98,15 @@ def test_no_db_disables_all_database_writes(monkeypatch):
 
     assert result.exit_code == 0
     assert observed == {"downloads": False, "failed": False, "isrc": False}
+
+
+@pytest.mark.asyncio
+async def test_service_login_timeout_cancels_hanging_login():
+    class HangingMain:
+        async def get_logged_in_client(self, *_args, **_kwargs):
+            await asyncio.Event().wait()
+
+    with pytest.raises(TimeoutError):
+        await _get_logged_in_client_bounded(
+            HangingMain(), "deezer", timeout=0.01
+        )

@@ -144,10 +144,12 @@ class MultiSourceComparator:
         *,
         search_limit: int = 10,
         service_priority: tuple[str, ...] = ("tidal", "deezer", "qobuz"),
+        source_timeout: float = 45.0,
     ):
         self.clients = clients
         self.search_limit = search_limit
         self.service_priority = service_priority
+        self.source_timeout = source_timeout
 
     async def compare(
         self,
@@ -164,12 +166,15 @@ class MultiSourceComparator:
         qualities = quality_by_source or {}
         results = await asyncio.gather(
             *(
-                self._candidate_for_source(
-                    source,
-                    client,
-                    reference,
-                    qualities.get(source, getattr(client, "max_quality", 0)),
-                    reference_candidate if source == reference.source else None,
+                asyncio.wait_for(
+                    self._candidate_for_source(
+                        source,
+                        client,
+                        reference,
+                        qualities.get(source, getattr(client, "max_quality", 0)),
+                        reference_candidate if source == reference.source else None,
+                    ),
+                    timeout=self.source_timeout,
                 )
                 for source, client in self.clients.items()
                 if source in {"tidal", "qobuz", "deezer"}

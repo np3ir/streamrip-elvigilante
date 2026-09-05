@@ -306,6 +306,26 @@ async def test_one_service_failure_does_not_cancel_other_services():
 
 
 @pytest.mark.asyncio
+async def test_one_hanging_service_times_out_without_blocking_others():
+    good = candidate("qobuz", "q1", 16, 44100)
+
+    class HangingClient(FakeClient):
+        async def get_candidate(self, _source_id, _quality):
+            await asyncio.Event().wait()
+
+    clients = {
+        "tidal": HangingClient("tidal", candidate("tidal", "t1", 16, 44100)),
+        "qobuz": FakeClient("qobuz", good, [search_page("qobuz", "q1")]),
+    }
+    report = await MultiSourceComparator(
+        clients, source_timeout=0.01
+    ).compare(REFERENCE)
+
+    assert report.selected is good
+    assert report.errors["tidal"].startswith("TimeoutError:")
+
+
+@pytest.mark.asyncio
 async def test_conflicting_isrc_is_rejected_before_stream_inspection():
     qobuz = FakeClient(
         "qobuz",

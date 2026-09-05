@@ -43,6 +43,21 @@ def _is_help_invocation(argv=None) -> bool:
     return any(arg in {"-h", "--help"} for arg in args)
 
 
+async def _get_logged_in_client_bounded(
+    main,
+    source: str,
+    *,
+    prompt_on_missing: bool = True,
+    timeout: float = 45.0,
+):
+    """Prevent one external login from stalling a multi-service operation."""
+
+    return await asyncio.wait_for(
+        main.get_logged_in_client(source, prompt_on_missing=prompt_on_missing),
+        timeout=timeout,
+    )
+
+
 @click.group(
     cls=HelpColorsGroup,
     help_headers_color="yellow",
@@ -847,7 +862,7 @@ async def compare_sources(
             ),
         )
         async with Main(cfg) as main:
-            reference_client = await main.get_logged_in_client(source)
+            reference_client = await _get_logged_in_client_bounded(main, source)
             collection = await resolve_comparison_collection(
                 reference_client, media_type, item_id
             )
@@ -870,8 +885,8 @@ async def compare_sources(
                 if service == source:
                     continue
                 try:
-                    active_clients[service] = await main.get_logged_in_client(
-                        service, prompt_on_missing=False
+                    active_clients[service] = await _get_logged_in_client_bounded(
+                        main, service, prompt_on_missing=False
                     )
                 except Exception as error:
                     login_errors[service] = f"{type(error).__name__}: {error}"
@@ -1120,15 +1135,15 @@ async def library(
             )
 
         async with Main(cfg) as main:
-            reference_client = await main.get_logged_in_client(source)
+            reference_client = await _get_logged_in_client_bounded(main, source)
             clients = {source: reference_client}
             unavailable = {}
             for service in ("tidal", "deezer", "qobuz"):
                 if service == source:
                     continue
                 try:
-                    clients[service] = await main.get_logged_in_client(
-                        service, prompt_on_missing=False
+                    clients[service] = await _get_logged_in_client_bounded(
+                        main, service, prompt_on_missing=False
                     )
                 except Exception as error:
                     unavailable[service] = f"{type(error).__name__}: {error}"
