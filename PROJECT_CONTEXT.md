@@ -528,4 +528,12 @@ Implemented on 2026-08-29 as the next phase of the mass-library planner.
 - Validation: destination/publication/library/retry tests `38 passed`; all tests except the known order-sensitive Rich search module `215 passed, 7 skipped`; that module independently passes `5 passed`. Ruff passes for every changed production/test file and `git diff --check` reports only informational Windows line-ending notices. All identity tests use temporary simulated volumes. No real marker, private config activation, service request, credential operation, or media download occurred.
 - Operational next step requires the user to identify and confirm the intended real download root while it is mounted. Then run the isolated 2.2.8 client to trust it, verify `destination status`, and only afterward set `destination_identity = "strict"`. Do not enable strict mode first or downloads will correctly be refused.
 
+### Real destination trust activation
+
+- On 2026-09-05 the user identified `Z:\` as the intended library root. Read-only inspection confirmed it was mounted as the NTFS network drive labeled `SERVER`, backed by the existing `\\Servidor\server\Music` share, and that no Streamrip marker existed before authorization.
+- The isolated Streamrip 2.2.8 client established the destination marker and per-machine trust record, then `rip destination status Z:\` confirmed the two records matched. The opaque anchor ID is intentionally not copied into this repository memory.
+- The private config was backed up as `config.toml.before-destination-identity.bak`, then changed from the prior local Music folder to `folder = "Z:/"` and `destination_identity = "strict"`. No credential fields were read, printed, copied, or changed.
+- A read-only guard probe for a hypothetical child path under `Z:\` returned trusted; a second CLI status check passed and `rip recovery list` reported no retained staging files. No probe directory/file was created, no service was contacted, and no media was downloaded.
+- Future writes will now fail closed if `Z:\` is unavailable, its `.streamrip-anchor` is absent/invalid, or a different volume/share appears at the same path. Do not delete or edit the marker manually; use `rip destination status`, `trust --adopt-existing`, or `forget` as appropriate.
+
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
