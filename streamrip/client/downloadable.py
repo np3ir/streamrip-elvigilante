@@ -104,6 +104,7 @@ class Downloadable(ABC):
             await self._download(stage, callback)
             if not os.path.isfile(stage) or os.path.getsize(stage) <= 0:
                 raise NonStreamableError("Downloaded staging file is missing or empty")
+            self._validate_stage(stage)
             if destination_root is not None:
                 from ..destination_identity import (
                     DestinationIdentityError,
@@ -146,6 +147,9 @@ class Downloadable(ABC):
                 except FileNotFoundError:
                     pass
             raise
+
+    def _validate_stage(self, path: str) -> None:
+        """Validate provider-specific invariants before final publication."""
 
     async def size(self) -> int:
         if hasattr(self, "_size") and self._size is not None:
@@ -380,10 +384,12 @@ class TidalDownloadable(Downloadable):
         *,
         urls: tuple[str, ...] | None = None,
         quality=None,
+        max_bit_depth: int | None = None,
     ):
         self.session = session
         self.source = "tidal"
         self.quality = quality
+        self.max_bit_depth = max_bit_depth
         codec = codec.lower()
         if codec in ("flac", "mqa"):
             self.extension = "flac"
@@ -404,6 +410,24 @@ class TidalDownloadable(Downloadable):
         self.url = self.urls[0]
         self.enc_key = encryption_key
         self.downloadable = BasicDownloadable(session, self.url, self.extension, "tidal")
+
+    def _validate_stage(self, path: str) -> None:
+        if self.max_bit_depth is None or self.extension != "flac":
+            return
+        from .audio_probe import parse_flac_streaminfo
+
+        with open(path, "rb") as audio:
+            measured = parse_flac_streaminfo(audio.read(64 * 1024))
+        if measured is None:
+            raise NonStreamableError(
+                "Downloaded TIDAL FLAC could not be verified before publication"
+            )
+        bit_depth, _sample_rate, _channels = measured
+        if bit_depth > self.max_bit_depth:
+            raise NonStreamableError(
+                f"Downloaded TIDAL FLAC is {bit_depth}-bit, above the "
+                f"{self.max_bit_depth}-bit limit"
+            )
 
     async def _download(self, path: str, callback):
         if len(self.urls) == 1:

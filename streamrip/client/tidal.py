@@ -431,6 +431,7 @@ class TidalClient(Client):
                     restrictions=manifest.restrictions,
                     urls=manifest.urls,
                     quality=delivered_quality,
+                    max_bit_depth=16 if q == 2 else None,
                 )
                 if (
                     manifest.quality.lossless
