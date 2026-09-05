@@ -361,6 +361,8 @@ class QobuzClient(Client):
             "flac" if lossless else "mp3",
             source="qobuz",
             quality=technical_quality,
+            max_bit_depth=16 if quality == 2 else None,
+            max_sample_rate_hz=44100 if quality == 2 else None,
         )
 
     async def _paginate(

@@ -151,6 +151,33 @@ class Downloadable(ABC):
     def _validate_stage(self, path: str) -> None:
         """Validate provider-specific invariants before final publication."""
 
+        max_bit_depth = getattr(self, "max_bit_depth", None)
+        max_sample_rate_hz = getattr(self, "max_sample_rate_hz", None)
+        if (
+            self.extension != "flac"
+            or (max_bit_depth is None and max_sample_rate_hz is None)
+        ):
+            return
+        from .audio_probe import parse_flac_streaminfo
+
+        with open(path, "rb") as audio:
+            measured = parse_flac_streaminfo(audio.read(64 * 1024))
+        if measured is None:
+            raise NonStreamableError(
+                f"Downloaded {self.source} FLAC could not be verified before publication"
+            )
+        bit_depth, sample_rate_hz, _channels = measured
+        if max_bit_depth is not None and bit_depth > max_bit_depth:
+            raise NonStreamableError(
+                f"Downloaded {self.source} FLAC is {bit_depth}-bit, above the "
+                f"{max_bit_depth}-bit limit"
+            )
+        if max_sample_rate_hz is not None and sample_rate_hz > max_sample_rate_hz:
+            raise NonStreamableError(
+                f"Downloaded {self.source} FLAC is {sample_rate_hz} Hz, above the "
+                f"{max_sample_rate_hz} Hz limit"
+            )
+
     async def size(self) -> int:
         if hasattr(self, "_size") and self._size is not None:
             return self._size
@@ -184,6 +211,8 @@ class BasicDownloadable(Downloadable):
         extension: str,
         source: str | None = None,
         quality=None,
+        max_bit_depth: int | None = None,
+        max_sample_rate_hz: int | None = None,
     ):
         self.session = session
         self.url = url
@@ -191,6 +220,8 @@ class BasicDownloadable(Downloadable):
         self._size = None
         self.source: str = source or "Unknown"
         self.quality = quality
+        self.max_bit_depth = max_bit_depth
+        self.max_sample_rate_hz = max_sample_rate_hz
 
     async def _download(self, path: str, callback):
         await fast_async_download(path, self.url, self.session.headers, callback, session=self.session)
@@ -240,6 +271,8 @@ class DeezerDownloadable(Downloadable):
                 channels=2,
             )
         )
+        self.max_bit_depth = 16 if self.quality == 2 else None
+        self.max_sample_rate_hz = 44100 if self.quality == 2 else None
         self.id = str(info["id"])
 
     async def _download(self, path: str, callback):
@@ -385,11 +418,13 @@ class TidalDownloadable(Downloadable):
         urls: tuple[str, ...] | None = None,
         quality=None,
         max_bit_depth: int | None = None,
+        max_sample_rate_hz: int | None = None,
     ):
         self.session = session
         self.source = "tidal"
         self.quality = quality
         self.max_bit_depth = max_bit_depth
+        self.max_sample_rate_hz = max_sample_rate_hz
         codec = codec.lower()
         if codec in ("flac", "mqa"):
             self.extension = "flac"
@@ -410,24 +445,6 @@ class TidalDownloadable(Downloadable):
         self.url = self.urls[0]
         self.enc_key = encryption_key
         self.downloadable = BasicDownloadable(session, self.url, self.extension, "tidal")
-
-    def _validate_stage(self, path: str) -> None:
-        if self.max_bit_depth is None or self.extension != "flac":
-            return
-        from .audio_probe import parse_flac_streaminfo
-
-        with open(path, "rb") as audio:
-            measured = parse_flac_streaminfo(audio.read(64 * 1024))
-        if measured is None:
-            raise NonStreamableError(
-                "Downloaded TIDAL FLAC could not be verified before publication"
-            )
-        bit_depth, _sample_rate, _channels = measured
-        if bit_depth > self.max_bit_depth:
-            raise NonStreamableError(
-                f"Downloaded TIDAL FLAC is {bit_depth}-bit, above the "
-                f"{self.max_bit_depth}-bit limit"
-            )
 
     async def _download(self, path: str, callback):
         if len(self.urls) == 1:

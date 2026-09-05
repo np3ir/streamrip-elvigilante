@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import pytest
 
 from streamrip.client.audio_probe import parse_flac_streaminfo
-from streamrip.client.downloadable import TidalDownloadable
+from streamrip.client.downloadable import BasicDownloadable, TidalDownloadable
 from streamrip.exceptions import NonStreamableError
 
 
@@ -55,3 +55,20 @@ def test_tidal_stage_accepts_physical_quality_at_limit(tmp_path):
     )
 
     downloadable._validate_stage(str(path))
+
+
+@pytest.mark.parametrize("source", ["qobuz", "deezer"])
+def test_common_flac_stage_rejects_sample_rate_above_limit(tmp_path, source):
+    path = tmp_path / "audio.flac"
+    path.write_bytes(flac_header(16, 48000))
+    downloadable = BasicDownloadable(
+        Mock(),
+        "https://media/audio.flac",
+        "flac",
+        source,
+        max_bit_depth=16,
+        max_sample_rate_hz=44100,
+    )
+
+    with pytest.raises(NonStreamableError, match="48000 Hz"):
+        downloadable._validate_stage(str(path))

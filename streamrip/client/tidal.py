@@ -432,6 +432,7 @@ class TidalClient(Client):
                     urls=manifest.urls,
                     quality=delivered_quality,
                     max_bit_depth=16 if q == 2 else None,
+                    max_sample_rate_hz=44100 if q == 2 else None,
                 )
                 if (
                     manifest.quality.lossless
