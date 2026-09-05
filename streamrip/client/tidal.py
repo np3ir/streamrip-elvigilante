@@ -400,6 +400,10 @@ class TidalClient(Client):
         fallback_attempted = False
         best_lossy = None
         if quality == 2 and getattr(self, "allow_lossless_fallback", False):
+            logger.debug(
+                "TIDAL playback route for %s: TV first (16-bit ceiling)",
+                track_id,
+            )
             fallback = await self._get_lossless_fallback_client()
             if fallback is not None:
                 fallback_attempted = True
@@ -417,6 +421,11 @@ class TidalClient(Client):
                     )
                 else:
                     if fallback_result.quality.lossless:
+                        logger.debug(
+                            "TIDAL playback route for %s: TV satisfied lossless ceiling; "
+                            "primary HiRes not requested",
+                            track_id,
+                        )
                         return fallback_result
                     best_lossy = fallback_result
 

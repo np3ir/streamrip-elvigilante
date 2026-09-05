@@ -453,9 +453,7 @@ class QobuzClient(Client):
         quality = self.get_quality(quality)
         unix_ts = time.time()
         r_sig = f"trackgetFileUrlformat_id{quality}intentstreamtrack_id{track_id}{unix_ts}{secret}"
-        logger.debug("Raw request signature: %s", r_sig)
         r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).hexdigest()
-        logger.debug("Hashed request signature: %s", r_sig_hashed)
         params = {
             "request_ts": unix_ts,
             "request_sig": r_sig_hashed,
@@ -470,7 +468,11 @@ class QobuzClient(Client):
         returns: status code, json parsed response
         """
         url = f"{QOBUZ_BASE_URL}/{epoint}"
-        logger.debug("api_request: endpoint=%s, params=%s", epoint, params)
+        logger.debug(
+            "api_request: endpoint=%s, parameter_names=%s",
+            epoint,
+            sorted(params),
+        )
         async with self.rate_limiter:
             async with self.session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as response:
                 return response.status, await response.json()

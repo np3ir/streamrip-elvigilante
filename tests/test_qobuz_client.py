@@ -81,3 +81,53 @@ def test_client_search_no_limit(qobuz_client):
         total += len(r["albums"]["items"])
         correct_total = max(correct_total, r["albums"]["total"])
     assert total == correct_total
+class _ImmediateLimiter:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+
+class _Response:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def json(self):
+        return {"ok": True}
+
+
+class _Session:
+    def get(self, *_args, **_kwargs):
+        return _Response()
+
+
+@pytest.mark.asyncio
+async def test_api_debug_log_never_contains_parameter_values(capsys):
+    client = object.__new__(QobuzClient)
+    client.rate_limiter = _ImmediateLimiter()
+    client.session = _Session()
+    secret = "private-user-token"
+
+    previous_level = logger.level
+    logger.setLevel(logging.DEBUG)
+    try:
+        status, response = await client._api_request(
+            "user/login",
+            {"user_id": "private-user-id", "user_auth_token": secret},
+        )
+    finally:
+        logger.setLevel(previous_level)
+
+    assert status == 200
+    assert response == {"ok": True}
+    output = capsys.readouterr().out
+    assert "parameter_names" in output
+    assert "user_auth_token" in output
+    assert secret not in output
+    assert "private-user-id" not in output
