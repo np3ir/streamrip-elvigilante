@@ -537,3 +537,13 @@ Implemented on 2026-08-29 as the next phase of the mass-library planner.
 - Future writes will now fail closed if `Z:\` is unavailable, its `.streamrip-anchor` is absent/invalid, or a different volume/share appears at the same path. Do not delete or edit the marker manually; use `rip destination status`, `trust --adopt-existing`, or `forget` as appropriate.
 
 Repository-local Git identity is configured as the existing project author. No global identity was changed and no push occurred.
+
+## Physical TIDAL quality verification
+
+- An explicitly authorized one-track validation of TIDAL track `524417109` exposed a correctness defect: comparison advertised the candidate as FLAC/lossless/16-bit/44.1 kHz, while independent inspection of the completed file found FLAC/lossless/24-bit/44.1 kHz. The file remains under the trusted `Z:\` library; it was not deleted or altered. No further audio download was performed.
+- The cause was reliance on TIDAL playback-response `bitDepth`. The new bounded stream probe reads at most 64 KiB from the signed media URL and decodes the physical FLAC STREAMINFO bit depth, sample rate, and channel count before accepting a lossless candidate. Native FLAC and an embedded FLAC marker in initialization data are supported.
+- For the requested 16-bit TIDAL tier, a measured stream above 16 bits is rejected and the existing tier cascade continues. The check fails closed: if the physical header cannot be measured, the claimed 16-bit lossless response is not accepted blindly and the cascade continues to the next playable lower tier. Higher requested TIDAL tiers retain their existing behavior while using measured properties when available.
+- A subsequent live comparison-only check of the same track performed no download and reported physically inspected FLAC/lossless/16-bit/44.1 kHz/stereo. `Z:\` destination identity passed before the check; Qobuz remained ineligible. The opaque destination anchor ID is not recorded here.
+- Changed files: new `streamrip/client/audio_probe.py`, `streamrip/client/tidal.py`, new `tests/test_audio_probe.py`, and `tests/test_tidal_quality.py`.
+- Validation: focused probe/TIDAL/manifest/comparison tests `27 passed`; full suite excluding the known order-sensitive Rich search module `219 passed, 7 skipped`; that module independently passed `5 passed`; Ruff clean and `git diff --check` reported only informational Windows line-ending notices.
+- Remaining defense-in-depth work: propagate the explicit comparison ceiling into final media validation so a changed or malformed stream can be refused immediately before publication. A new real download should wait for that guard and separate user authorization.

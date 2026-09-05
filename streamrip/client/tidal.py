@@ -21,6 +21,7 @@ from ..exceptions import (
     NonStreamableError,
     TidalRateLimitError,
 )
+from .audio_probe import probe_flac_quality
 from .client import Client
 from .downloadable import TidalDownloadable, TidalVideoDownloadable
 from .request_budget import RateLimitGuard, SharedRequestBudget
@@ -409,6 +410,19 @@ class TidalClient(Client):
                     resp = await self._api_request(f"tracks/{track_id}/playbackinfopostpaywall", params, base=API_BASE)
 
                 manifest = parse_tidal_manifest(resp)
+                measured_quality = None
+                if manifest.quality.lossless:
+                    try:
+                        measured_quality = await probe_flac_quality(
+                            self.session, manifest.urls, manifest.quality
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Could not inspect TIDAL stream header for %s",
+                            track_id,
+                            exc_info=True,
+                        )
+                delivered_quality = measured_quality or manifest.quality
                 downloadable = TidalDownloadable(
                     self.session,
                     url=None,
@@ -416,11 +430,32 @@ class TidalClient(Client):
                     encryption_key=manifest.encryption_key,
                     restrictions=manifest.restrictions,
                     urls=manifest.urls,
-                    quality=manifest.quality,
+                    quality=delivered_quality,
                 )
-                if manifest.quality.lossless:
+                if (
+                    manifest.quality.lossless
+                    and q == 2
+                    and (
+                        measured_quality is None
+                        or measured_quality.bit_depth is None
+                        or measured_quality.bit_depth > 16
+                    )
+                ):
+                    if measured_quality is None:
+                        logger.warning(
+                            "Could not verify TIDAL's 16-bit stream; "
+                            "continuing the quality cascade"
+                        )
+                    else:
+                        logger.info(
+                            "TIDAL returned %s-bit audio for the 16-bit tier; "
+                            "continuing the quality cascade",
+                            measured_quality.bit_depth,
+                        )
+                    continue
+                if delivered_quality.lossless:
                     return downloadable
-                if best_lossy is None or manifest.quality.rank > best_lossy.quality.rank:
+                if best_lossy is None or delivered_quality.rank > best_lossy.quality.rank:
                     best_lossy = downloadable
             except (NonStreamableError, TidalRateLimitError):
                 raise

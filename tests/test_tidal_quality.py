@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -30,7 +30,14 @@ async def test_tidal_cascade_requests_each_tier_once_and_keeps_searching_for_fla
         return playback("LOSSLESS", "flac", bitDepth=16, sampleRate=44100)
 
     client._api_request = request
-    result = await client.get_downloadable("123", quality=4)
+    physical = AudioQuality(
+        codec="flac", lossless=True, bit_depth=16, sample_rate_hz=44100
+    )
+    with patch(
+        "streamrip.client.tidal.probe_flac_quality",
+        AsyncMock(return_value=physical),
+    ):
+        result = await client.get_downloadable("123", quality=4)
 
     assert requested == ["HI_RES_LOSSLESS", "HI_RES", "LOSSLESS"]
     assert len(requested) == len(set(requested))
@@ -104,3 +111,51 @@ async def test_tidal_lossless_uses_tv_fallback_when_hires_token_degrades_to_aac(
 
     assert result is fallback_result
     fallback.get_downloadable.assert_awaited_once_with("123", quality=2)
+
+
+@pytest.mark.asyncio
+async def test_tidal_cascade_rejects_measured_24_bit_from_16_bit_tier():
+    client = object.__new__(TidalClient)
+    client.session = Mock()
+    requested = []
+
+    async def request(_path, params=None, **_kwargs):
+        requested.append(params["audioquality"])
+        if params["audioquality"] == "LOSSLESS":
+            return playback("LOSSLESS", "flac", bitDepth=16, sampleRate=44100)
+        return playback("HIGH", "mp4a.40.2", bitrate=320)
+
+    physical = AudioQuality(
+        codec="flac", lossless=True, bit_depth=24, sample_rate_hz=44100
+    )
+    client._api_request = request
+    with patch(
+        "streamrip.client.tidal.probe_flac_quality",
+        AsyncMock(return_value=physical),
+    ):
+        result = await client.get_downloadable("123", quality=2)
+
+    assert requested == ["LOSSLESS", "HIGH", "LOW"]
+    assert result.quality.lossless is False
+    assert result.quality.bitrate_kbps == 320
+
+
+@pytest.mark.asyncio
+async def test_tidal_16_bit_tier_fails_closed_when_header_cannot_be_verified():
+    client = object.__new__(TidalClient)
+    client.session = Mock()
+
+    async def request(_path, params=None, **_kwargs):
+        if params["audioquality"] == "LOSSLESS":
+            return playback("LOSSLESS", "flac", bitDepth=16, sampleRate=44100)
+        return playback("HIGH", "mp4a.40.2", bitrate=320)
+
+    client._api_request = request
+    with patch(
+        "streamrip.client.tidal.probe_flac_quality",
+        AsyncMock(return_value=None),
+    ):
+        result = await client.get_downloadable("123", quality=2)
+
+    assert result.quality.lossless is False
+    assert result.quality.bitrate_kbps == 320
