@@ -12,6 +12,11 @@ from ..client import Client, Downloadable
 from ..config import Config
 from ..console import console
 from ..db import Database
+from ..destination_identity import (
+    DestinationIdentityError,
+    configured_root,
+    guard_configured_write,
+)
 from ..exceptions import NonStreamableError
 from ..file_publish import PublishError
 
@@ -92,6 +97,7 @@ class Track(Media):
 
     async def preprocess(self):
         self._set_download_path()
+        guard_configured_write(self.config, self.download_path)
         os.makedirs(self.folder, exist_ok=True)
         if self.is_single: add_title(self.meta.title)
 
@@ -112,15 +118,39 @@ class Track(Media):
             display_title = self.meta.title
             for attempt in range(1, max_retries + 2):
                 try:
+                    anchor = guard_configured_write(self.config, self.download_path)
+                    destination_root = (
+                        os.fspath(configured_root(self.config, self.download_path))
+                        if anchor is not None
+                        else None
+                    )
                     size = await self.downloadable.size()
                     desc = display_title if attempt == 1 else f"{display_title} (retry {attempt - 1})"
                     handle = get_progress_callback(self.config.session.cli.progress_bars, size, desc)
                     with handle as update_fn:
-                        await self.downloadable.download(self.download_path, update_fn)
+                        if anchor is None:
+                            await self.downloadable.download(self.download_path, update_fn)
+                        else:
+                            await self.downloadable.download(
+                                self.download_path,
+                                update_fn,
+                                destination_root=destination_root,
+                                destination_anchor_id=anchor.anchor_id,
+                            )
                     return
                 except asyncio.CancelledError:
                     # Propagate cancellations so higher-level logic can abort cleanly
                     raise
+                except DestinationIdentityError as error:
+                    logger.error("Destination write refused: %s", error)
+                    self.db.set_failed(
+                        self.downloadable.source,
+                        "track",
+                        self.failure_id or self.meta.info.id,
+                    )
+                    if self.failure_callback is not None:
+                        self.failure_callback(self.download_path)
+                    return
                 except PublishError as error:
                     logger.error("Verified media could not be published: %s", error)
                     self.db.set_failed(
@@ -154,11 +184,13 @@ class Track(Media):
 
     async def postprocess(self):
         if self.is_single: remove_title(self.meta.title)
+        guard_configured_write(self.config, self.download_path)
         await tag_file(self.download_path, self.meta, self.cover_path)
         if self.config.session.conversion.enabled: await self._convert()
         # Save .lrc sidecar file when lyrics were fetched
         if self.lrc_content:
             lrc_path = os.path.splitext(self.download_path)[0] + ".lrc"
+            guard_configured_write(self.config, lrc_path)
             try:
                 with open(lrc_path, "w", encoding="utf-8") as lrc_file:
                     lrc_file.write(self.lrc_content)
@@ -312,6 +344,7 @@ class PendingSingle(Pending):
             return None
         else:
             if self.db.downloaded(self.id): logger.warning(f"[!] Re-downloading: {os.path.basename(file_path)}")
+            guard_configured_write(self.config, file_path)
             os.makedirs(folder, exist_ok=True)
             embedded_cover_path = await self._download_cover(album.covers, folder)
 

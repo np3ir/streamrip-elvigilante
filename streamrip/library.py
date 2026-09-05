@@ -18,6 +18,7 @@ import click
 from .client.candidate import track_identity
 from .config import Config
 from .db import Database
+from .destination_identity import guard_configured_write
 from .filepath_utils import clean_filepath
 from .media.artwork import download_artwork
 from .media.lyrics import fetch_lrc
@@ -83,6 +84,7 @@ class PendingLibraryTrack(Pending):
             and album.disctotal > 1
         ):
             folder = os.path.join(folder, f"Disc {metadata.discnumber}")
+        guard_configured_write(self.config, folder)
         os.makedirs(folder, exist_ok=True)
 
         downloadable = await self.audio_client.get_downloadable(

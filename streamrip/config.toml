@@ -31,6 +31,9 @@ max_retries = 3
 retry_delay = 2.0
 # Maximum wait time in seconds between retries (caps exponential backoff to avoid multi-minute hangs)
 max_wait = 60.0
+# Protect trusted NAS/USB roots against writes to a missing or replaced volume.
+# Run `rip destination trust PATH` before changing this to "strict".
+destination_identity = "off"
 
 [comparison]
 # Permanent cross-service quality ceilings. Zero means no ceiling.

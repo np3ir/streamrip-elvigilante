@@ -31,6 +31,8 @@ class RecoveryEntry:
     destination_path: str
     size: int
     sha256: str
+    destination_root: str | None = None
+    destination_anchor_id: str | None = None
     version: int = RECOVERY_VERSION
 
 
@@ -99,6 +101,8 @@ def register_recovery(
     staging_path: str | Path,
     destination_path: str | Path,
     *,
+    destination_root: str | Path | None = None,
+    destination_anchor_id: str | None = None,
     directory: str | Path | None = None,
 ) -> RecoveryEntry:
     """Atomically register a verified stage without moving or modifying it."""
@@ -118,6 +122,10 @@ def register_recovery(
         destination_path=os.fspath(destination),
         size=staging.stat().st_size,
         sha256=_sha256(staging),
+        destination_root=(
+            os.fspath(Path(destination_root)) if destination_root is not None else None
+        ),
+        destination_anchor_id=destination_anchor_id,
     )
     recovery_dir = Path(directory) if directory is not None else default_recovery_directory()
     recovery_dir.mkdir(parents=True, exist_ok=True)
@@ -204,13 +212,26 @@ def remove_recovery(
 
 
 async def retry_recovery(
-    entry_id: str, *, directory: str | Path | None = None
+    entry_id: str,
+    *,
+    identity_mode: str = "off",
+    directory: str | Path | None = None,
 ) -> RecoveryEntry:
     """Publish one unchanged retained stage and remove its record on success."""
 
     recovery_dir = Path(directory) if directory is not None else default_recovery_directory()
     entry = get_recovery(entry_id, directory=recovery_dir)
     staging = await asyncio.to_thread(_validate_recovery_stage, entry)
+    if identity_mode == "strict":
+        if entry.destination_root is None or entry.destination_anchor_id is None:
+            raise RecoveryError("recovery entry has no trusted destination identity")
+        from .destination_identity import check_destination
+
+        check_destination(
+            entry.destination_root,
+            entry.destination_path,
+            expected_anchor_id=entry.destination_anchor_id,
+        )
     await publish_verified_file(staging, entry.destination_path)
     await asyncio.to_thread(remove_recovery, entry.id, directory=recovery_dir)
     return entry

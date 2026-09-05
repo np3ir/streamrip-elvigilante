@@ -169,6 +169,7 @@ class DownloadsConfig:
     retry_delay: float = 2.0
     # Maximum wait time in seconds between retries (caps exponential backoff)
     max_wait: float = 60.0
+    destination_identity: str = "off"
 
 
 @dataclass(slots=True)
@@ -246,6 +247,11 @@ class ConfigData:
             dl_data["retry_delay"] = 2.0
         if "max_wait" not in dl_data:
             dl_data["max_wait"] = 60.0
+        if "destination_identity" not in dl_data:
+            dl_data["destination_identity"] = "off"
+        if dl_data["destination_identity"] not in ("off", "strict"):
+            logger.warning("Invalid destination_identity; resetting to 'off'.")
+            dl_data["destination_identity"] = "off"
         # Ensure max_retries is non-negative; negative values silently skip downloads.
         # Guard against non-numeric / malformed values from bad TOML input.
         try:

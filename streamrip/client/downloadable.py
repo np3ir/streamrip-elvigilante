@@ -12,6 +12,7 @@ import tempfile
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 import aiofiles
@@ -88,7 +89,14 @@ class Downloadable(ABC):
     source: str = "Unknown"
     _size_base: Optional[int] = None
 
-    async def download(self, path: str, callback: Callable[[int], Any]):
+    async def download(
+        self,
+        path: str,
+        callback: Callable[[int], Any],
+        *,
+        destination_root: str | None = None,
+        destination_anchor_id: str | None = None,
+    ):
         suffix = f".{self.extension}" if self.extension else ".media"
         descriptor, stage = tempfile.mkstemp(prefix="streamrip-stage-", suffix=suffix)
         os.close(descriptor)
@@ -96,12 +104,33 @@ class Downloadable(ABC):
             await self._download(stage, callback)
             if not os.path.isfile(stage) or os.path.getsize(stage) <= 0:
                 raise NonStreamableError("Downloaded staging file is missing or empty")
+            if destination_root is not None:
+                from ..destination_identity import (
+                    DestinationIdentityError,
+                    check_destination,
+                )
+
+                try:
+                    check_destination(
+                        destination_root,
+                        path,
+                        expected_anchor_id=destination_anchor_id,
+                    )
+                except DestinationIdentityError as identity_error:
+                    raise PublishError(
+                        f"destination identity verification failed: {identity_error}",
+                        Path(stage),
+                    ) from identity_error
             await publish_verified_file(stage, path)
         except PublishError as error:
             # A valid stage is intentionally retained for manual recovery.
             try:
                 entry = await asyncio.to_thread(
-                    register_recovery, error.retained_path, path
+                    register_recovery,
+                    error.retained_path,
+                    path,
+                    destination_root=destination_root,
+                    destination_anchor_id=destination_anchor_id,
                 )
                 error.recovery_id = entry.id
             except OSError as registry_error:

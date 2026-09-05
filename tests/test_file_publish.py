@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from streamrip.client.downloadable import Downloadable
+from streamrip.destination_identity import DestinationIdentityError
 from streamrip.file_publish import (
     PublishError,
     RecoveryError,
@@ -156,6 +157,42 @@ async def test_retry_recovery_rejects_modified_stage_and_preserves_record(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_strict_retry_refuses_replaced_destination_volume(tmp_path, monkeypatch):
+    from streamrip.destination_identity import marker_path, trust_destination
+
+    recovery = tmp_path / "recovery"
+    anchors = tmp_path / "anchors"
+    root = tmp_path / "library"
+    root.mkdir()
+    monkeypatch.setattr(
+        "streamrip.destination_identity.state_directory", lambda: anchors
+    )
+    anchor = trust_destination(root, directory=anchors)
+    source = tmp_path / "stage.flac"
+    source.write_bytes(b"verified-source")
+    destination = root / "track.flac"
+    entry = register_recovery(
+        source,
+        destination,
+        destination_root=root,
+        destination_anchor_id=anchor.anchor_id,
+        directory=recovery,
+    )
+    marker_path(root).write_text(
+        '{"format":"streamrip-destination-anchor","version":1,'
+        '"anchor_id":"different"}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OSError, match="does not match"):
+        await retry_recovery(entry.id, identity_mode="strict", directory=recovery)
+
+    assert source.read_bytes() == b"verified-source"
+    assert not destination.exists()
+    assert list_recoveries(directory=recovery) == [entry]
+
+
+@pytest.mark.asyncio
 async def test_downloadable_registers_publish_failure(tmp_path, monkeypatch):
     recovery = tmp_path / "recovery"
     staging = tmp_path / "staging"
@@ -187,7 +224,9 @@ async def test_registry_failure_does_not_hide_retained_stage(tmp_path, monkeypat
     monkeypatch.setattr("tempfile.tempdir", os.fspath(staging))
     monkeypatch.setattr(
         "streamrip.client.downloadable.register_recovery",
-        lambda *_args: (_ for _ in ()).throw(OSError("registry unavailable")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("registry unavailable")
+        ),
     )
 
     with pytest.raises(PublishError) as error:
@@ -197,3 +236,38 @@ async def test_registry_failure_does_not_hide_retained_stage(tmp_path, monkeypat
 
     assert error.value.retained_path.read_bytes() == b"verified-source"
     assert "recovery registration failed: registry unavailable" in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_identity_change_after_download_retains_and_registers_stage(
+    tmp_path, monkeypatch
+):
+    recovery = tmp_path / "recovery"
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    destination = tmp_path / "library" / "track.flac"
+    destination.parent.mkdir()
+    monkeypatch.setattr("tempfile.tempdir", os.fspath(staging))
+    monkeypatch.setattr(
+        "streamrip.file_publish.default_recovery_directory", lambda: recovery
+    )
+    monkeypatch.setattr(
+        "streamrip.destination_identity.check_destination",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            DestinationIdentityError("destination identity does not match")
+        ),
+    )
+
+    with pytest.raises(PublishError, match="identity does not match") as error:
+        await BytesDownloadable(b"verified-source").download(
+            os.fspath(destination),
+            lambda _size: None,
+            destination_root=os.fspath(destination.parent),
+            destination_anchor_id="original",
+        )
+
+    entries = list_recoveries(directory=recovery)
+    assert error.value.recovery_id == entries[0].id
+    assert entries[0].destination_anchor_id == "original"
+    assert Path(entries[0].staging_path).read_bytes() == b"verified-source"
+    assert not destination.exists()

@@ -517,14 +517,19 @@ def recovery_list():
 
 @recovery_group.command("retry")
 @click.argument("entry_id")
+@click.pass_context
 @coro
-async def recovery_retry(entry_id):
+async def recovery_retry(ctx, entry_id):
     """Retry atomic publication of one unchanged retained staging file."""
 
     from ..file_publish import RecoveryError, retry_recovery
 
     try:
-        entry = await retry_recovery(entry_id.lower())
+        cfg: Config | None = ctx.obj["config"]
+        mode = (
+            cfg.session.downloads.destination_identity if cfg is not None else "off"
+        )
+        entry = await retry_recovery(entry_id.lower(), identity_mode=mode)
     except (RecoveryError, OSError) as error:
         raise click.ClickException(str(error)) from None
     console.print(f"[green]Recovered {entry.destination_path}.[/green]")
@@ -549,6 +554,70 @@ def recovery_discard(entry_id, yes):
     except (RecoveryError, OSError) as error:
         raise click.ClickException(str(error)) from None
     console.print("[green]Removed the retained staging file and recovery record.[/green]")
+
+
+@rip.group("destination")
+def destination_group():
+    """Manage trusted destination-volume identities."""
+
+
+@destination_group.command("trust")
+@click.argument(
+    "root", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
+@click.option(
+    "--adopt-existing",
+    is_flag=True,
+    help="Adopt an existing marker created by another Streamrip installation.",
+)
+@click.option("-y", "--yes", is_flag=True, help="Confirm the volume is mounted.")
+def destination_trust(root, adopt_existing, yes):
+    """Trust the volume currently mounted at ROOT."""
+
+    from ..destination_identity import DestinationIdentityError, trust_destination
+
+    if not yes and not Confirm.ask(
+        f"Is the intended destination volume currently mounted at {root}?"
+    ):
+        console.print("Trust aborted")
+        return
+    try:
+        trust_destination(root, adopt_existing=adopt_existing)
+    except DestinationIdentityError as error:
+        raise click.ClickException(str(error)) from None
+    console.print(f"[green]Trusted destination {root} on this machine.[/green]")
+
+
+@destination_group.command("status")
+@click.argument("root", type=click.Path(file_okay=False, path_type=Path))
+def destination_status(root):
+    """Check whether ROOT currently matches its local trust record."""
+
+    from ..destination_identity import DestinationIdentityError, check_destination
+
+    try:
+        record = check_destination(root, root)
+    except DestinationIdentityError as error:
+        raise click.ClickException(str(error)) from None
+    console.print(
+        f"[green]Trusted destination is present.[/green] ID {record.anchor_id}"
+    )
+
+
+@destination_group.command("forget")
+@click.argument("root", type=click.Path(file_okay=False, path_type=Path))
+@click.option("-y", "--yes", is_flag=True, help="Do not ask for confirmation.")
+def destination_forget(root, yes):
+    """Remove local trust without modifying the destination marker."""
+
+    from ..destination_identity import forget_destination
+
+    if not yes and not Confirm.ask(f"Forget local trust for {root}?"):
+        console.print("Forget aborted")
+        return
+    removed = forget_destination(root)
+    message = "Removed local destination trust." if removed else "No local trust existed."
+    console.print(f"[green]{message}[/green]")
 
 
 @rip.group()

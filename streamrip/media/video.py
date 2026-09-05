@@ -12,6 +12,7 @@ from ..client import Client, Downloadable
 from ..config import Config
 from ..console import console
 from ..db import Database
+from ..destination_identity import configured_root, guard_configured_write
 from ..filepath_utils import clean_filename
 from ..progress import add_title, get_progress_callback, remove_title
 from .media import Media, Pending
@@ -69,6 +70,7 @@ class Video(Media):
 
     async def preprocess(self):
         self._set_download_path()
+        guard_configured_write(self.config, self.download_path)
         os.makedirs(self.folder, exist_ok=True)
         add_title(self.meta.title)
 
@@ -80,6 +82,15 @@ class Video(Media):
             display_title = self.meta.title
             for attempt in range(1, 3): 
                 try:
+                    target_path = self.download_path
+                    if self.downloadable.extension == "ts":
+                        target_path = self.download_path.replace(".mp4", ".ts")
+                    anchor = guard_configured_write(self.config, target_path)
+                    destination_root = (
+                        os.fspath(configured_root(self.config, target_path))
+                        if anchor is not None
+                        else None
+                    )
                     size = await self.downloadable.size()
                     desc = display_title if attempt == 1 else f"{display_title} (retry)"
                     
@@ -87,13 +98,17 @@ class Video(Media):
                     # But if downloadable.extension is mp4, we can go direct.
                     # If it is .ts, we download to .ts then convert.
                     
-                    target_path = self.download_path
-                    if self.downloadable.extension == "ts":
-                        target_path = self.download_path.replace(".mp4", ".ts")
-
                     handle = get_progress_callback(self.config.session.cli.progress_bars, size, desc)
                     with handle as update_fn:
-                        await self.downloadable.download(target_path, update_fn)
+                        if anchor is None:
+                            await self.downloadable.download(target_path, update_fn)
+                        else:
+                            await self.downloadable.download(
+                                target_path,
+                                update_fn,
+                                destination_root=destination_root,
+                                destination_anchor_id=anchor.anchor_id,
+                            )
                     
                     # If we downloaded a TS, we need to convert it here or in postprocess.
                     # Let's assume postprocess handles metadata and conversion if needed.

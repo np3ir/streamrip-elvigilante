@@ -15,6 +15,7 @@ from ..client import Client
 from ..config import Config
 from ..console import console
 from ..db import Database
+from ..destination_identity import guard_configured_write
 from ..exceptions import NonStreamableError
 
 # --- IMPORTAMOS LA NUEVA FUNCIÓN ---
@@ -114,6 +115,7 @@ class PendingPlaylistTrack(Pending):
         # tracks van directo en la carpeta de la playlist.
         restrict_chars = self.config.session.filepaths.restrict_characters
         track_folder = os.fspath(self.folder)
+        guard_configured_write(self.config, track_folder)
         os.makedirs(track_folder, exist_ok=True)
 
         # --- NOMBRE SIN NÚMERO DE TRACK (paridad tiddl) ---
