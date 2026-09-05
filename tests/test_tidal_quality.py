@@ -114,6 +114,64 @@ async def test_tidal_lossless_uses_tv_fallback_when_hires_token_degrades_to_aac(
 
 
 @pytest.mark.asyncio
+async def test_tidal_16_bit_routes_to_tv_first_without_primary_playback_request():
+    client = object.__new__(TidalClient)
+    client.session = Mock()
+    client.allow_lossless_fallback = True
+    client._api_request = AsyncMock()
+    fallback_result = SimpleNamespace(
+        quality=AudioQuality(
+            codec="flac",
+            lossless=True,
+            bit_depth=16,
+            sample_rate_hz=44100,
+        )
+    )
+    fallback = SimpleNamespace(
+        get_downloadable=AsyncMock(return_value=fallback_result)
+    )
+    client._get_lossless_fallback_client = AsyncMock(return_value=fallback)
+
+    result = await client.get_downloadable("123", quality=2)
+
+    assert result is fallback_result
+    fallback.get_downloadable.assert_awaited_once_with("123", quality=2)
+    client._api_request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tidal_16_bit_tries_primary_once_when_tv_only_delivers_lossy():
+    client = object.__new__(TidalClient)
+    client.session = Mock()
+    client.allow_lossless_fallback = True
+    requested = []
+
+    tv_result = SimpleNamespace(
+        quality=AudioQuality(codec="aac", lossless=False, bitrate_kbps=320)
+    )
+    fallback = SimpleNamespace(get_downloadable=AsyncMock(return_value=tv_result))
+    client._get_lossless_fallback_client = AsyncMock(return_value=fallback)
+
+    async def request(_path, params=None, **_kwargs):
+        requested.append(params["audioquality"])
+        return playback("LOSSLESS", "flac", bitDepth=16, sampleRate=44100)
+
+    client._api_request = request
+    physical = AudioQuality(
+        codec="flac", lossless=True, bit_depth=16, sample_rate_hz=44100
+    )
+    with patch(
+        "streamrip.client.tidal.probe_flac_quality",
+        AsyncMock(return_value=physical),
+    ):
+        result = await client.get_downloadable("123", quality=2)
+
+    assert result.quality.lossless is True
+    assert requested == ["LOSSLESS"]
+    fallback.get_downloadable.assert_awaited_once_with("123", quality=2)
+
+
+@pytest.mark.asyncio
 async def test_tidal_cascade_rejects_measured_24_bit_from_16_bit_tier():
     client = object.__new__(TidalClient)
     client.session = Mock()

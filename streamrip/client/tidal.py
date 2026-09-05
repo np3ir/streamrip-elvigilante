@@ -392,11 +392,38 @@ class TidalClient(Client):
         if media_type == "video":
             return await self._get_video_downloadable(track_id, quality)
 
+        # The TV client is substantially less restrictive and reliably serves
+        # the ordinary LOSSLESS tier.  Route a 16-bit ceiling there first so a
+        # large CD-quality run does not consume HiRes quota for every track.
+        # If TV cannot produce lossless audio, retain its best lossy result and
+        # let the primary cascade try to improve it without repeating TV later.
+        fallback_attempted = False
+        best_lossy = None
+        if quality == 2 and getattr(self, "allow_lossless_fallback", False):
+            fallback = await self._get_lossless_fallback_client()
+            if fallback is not None:
+                fallback_attempted = True
+                try:
+                    fallback_result = await fallback.get_downloadable(
+                        track_id, quality=2
+                    )
+                except TidalRateLimitError:
+                    raise
+                except Exception as error:
+                    logger.debug(
+                        "TIDAL TV-first LOSSLESS request failed for %s: %s",
+                        track_id,
+                        error,
+                    )
+                else:
+                    if fallback_result.quality.lossless:
+                        return fallback_result
+                    best_lossy = fallback_result
+
         qualities = [q for q in QUALITY_PRIORITY if q <= quality]
         if not qualities: qualities = QUALITY_PRIORITY
 
         last_err = None
-        best_lossy = None
 
         for q in qualities:
             try:
@@ -469,6 +496,7 @@ class TidalClient(Client):
             best_lossy is not None
             and quality >= 2
             and getattr(self, "allow_lossless_fallback", False)
+            and not fallback_attempted
         ):
             fallback = await self._get_lossless_fallback_client()
             if fallback is not None:
@@ -496,6 +524,7 @@ class TidalClient(Client):
             self._lossless_fallback_checked = True
             fallback = self.lossless_fallback(self.global_config)
             fallback.request_budget = self.request_budget
+            fallback.rate_limit_guard = self.rate_limit_guard
             try:
                 await fallback.login()
             except MissingCredentialsError:

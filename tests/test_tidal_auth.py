@@ -140,6 +140,34 @@ async def test_429_that_reaches_limit_trips_before_retrying():
 
 
 @pytest.mark.asyncio
+async def test_lossless_fallback_shares_request_budget_and_rate_limit_guard(monkeypatch):
+    primary = object.__new__(TidalClient)
+    primary._lossless_fallback_client = None
+    primary._lossless_fallback_checked = False
+    primary.global_config = object()
+    primary.request_budget = object()
+    primary.rate_limit_guard = RateLimitGuard()
+
+    fallback = object.__new__(TidalClient)
+
+    async def login():
+        fallback.logged_in = True
+
+    fallback.login = login
+    monkeypatch.setattr(
+        TidalClient,
+        "lossless_fallback",
+        classmethod(lambda cls, config: fallback),
+    )
+
+    result = await primary._get_lossless_fallback_client()
+
+    assert result is fallback
+    assert fallback.request_budget is primary.request_budget
+    assert fallback.rate_limit_guard is primary.rate_limit_guard
+
+
+@pytest.mark.asyncio
 async def test_device_authorization_returns_code_and_uri():
     client = object.__new__(TidalClient)
 
