@@ -22,7 +22,7 @@ from Cryptodome.Util import Counter
 
 from .. import converter
 from ..exceptions import NonStreamableError
-from ..file_publish import PublishError, publish_verified_file
+from ..file_publish import PublishError, publish_verified_file, register_recovery
 
 logger = logging.getLogger("streamrip")
 
@@ -97,8 +97,17 @@ class Downloadable(ABC):
             if not os.path.isfile(stage) or os.path.getsize(stage) <= 0:
                 raise NonStreamableError("Downloaded staging file is missing or empty")
             await publish_verified_file(stage, path)
-        except PublishError:
+        except PublishError as error:
             # A valid stage is intentionally retained for manual recovery.
+            try:
+                entry = await asyncio.to_thread(
+                    register_recovery, error.retained_path, path
+                )
+                error.recovery_id = entry.id
+            except OSError as registry_error:
+                # Keep the publication failure truthful even if its recovery
+                # metadata cannot be persisted. The retained path stays visible.
+                error.recovery_error = str(registry_error)
             raise
         except Exception:
             # Invalid/incomplete downloads are disposable.

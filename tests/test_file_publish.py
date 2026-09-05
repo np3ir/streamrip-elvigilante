@@ -4,7 +4,15 @@ from pathlib import Path
 import pytest
 
 from streamrip.client.downloadable import Downloadable
-from streamrip.file_publish import PublishError, publish_verified_file
+from streamrip.file_publish import (
+    PublishError,
+    RecoveryError,
+    list_recoveries,
+    publish_verified_file,
+    register_recovery,
+    remove_recovery,
+    retry_recovery,
+)
 
 
 class BytesDownloadable(Downloadable):
@@ -97,3 +105,95 @@ async def test_corrupt_cross_volume_copy_preserves_source_and_prior_final(
     assert source.read_bytes() == b"verified-source"
     assert destination.read_bytes() == b"old-valid-file"
     assert not list(destination.parent.glob("*.streamrip-part-*"))
+
+
+def test_recovery_registry_round_trip_and_verified_discard(tmp_path):
+    recovery = tmp_path / "recovery"
+    source = tmp_path / "stage.flac"
+    source.write_bytes(b"verified-source")
+    destination = tmp_path / "library" / "track.flac"
+
+    entry = register_recovery(source, destination, directory=recovery)
+
+    assert list_recoveries(directory=recovery) == [entry]
+    remove_recovery(entry.id, delete_staging=True, directory=recovery)
+    assert not source.exists()
+    assert list_recoveries(directory=recovery) == []
+
+
+@pytest.mark.asyncio
+async def test_retry_recovery_validates_and_publishes_without_redownload(tmp_path):
+    recovery = tmp_path / "recovery"
+    source = tmp_path / "stage.flac"
+    source.write_bytes(b"verified-source")
+    destination = tmp_path / "library" / "track.flac"
+    destination.parent.mkdir()
+    destination.write_bytes(b"old-valid-file")
+    entry = register_recovery(source, destination, directory=recovery)
+
+    await retry_recovery(entry.id, directory=recovery)
+
+    assert destination.read_bytes() == b"verified-source"
+    assert not source.exists()
+    assert list_recoveries(directory=recovery) == []
+
+
+@pytest.mark.asyncio
+async def test_retry_recovery_rejects_modified_stage_and_preserves_record(tmp_path):
+    recovery = tmp_path / "recovery"
+    source = tmp_path / "stage.flac"
+    source.write_bytes(b"verified-source")
+    destination = tmp_path / "library" / "track.flac"
+    destination.parent.mkdir()
+    entry = register_recovery(source, destination, directory=recovery)
+    source.write_bytes(b"tampered-source")
+
+    with pytest.raises(RecoveryError, match="no longer matches"):
+        await retry_recovery(entry.id, directory=recovery)
+
+    assert not destination.exists()
+    assert list_recoveries(directory=recovery) == [entry]
+
+
+@pytest.mark.asyncio
+async def test_downloadable_registers_publish_failure(tmp_path, monkeypatch):
+    recovery = tmp_path / "recovery"
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    destination = tmp_path / "missing" / "track.flac"
+    monkeypatch.setattr("tempfile.tempdir", os.fspath(staging))
+    monkeypatch.setattr(
+        "streamrip.file_publish.default_recovery_directory", lambda: recovery
+    )
+
+    with pytest.raises(PublishError) as error:
+        await BytesDownloadable(b"verified-source").download(
+            os.fspath(destination), lambda _size: None
+        )
+
+    entries = list_recoveries(directory=recovery)
+    assert len(entries) == 1
+    assert error.value.recovery_id == entries[0].id
+    assert f"recovery ID {entries[0].id}" in str(error.value)
+    assert Path(entries[0].staging_path).read_bytes() == b"verified-source"
+    assert entries[0].destination_path == os.fspath(destination.resolve())
+
+
+@pytest.mark.asyncio
+async def test_registry_failure_does_not_hide_retained_stage(tmp_path, monkeypatch):
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    destination = tmp_path / "missing" / "track.flac"
+    monkeypatch.setattr("tempfile.tempdir", os.fspath(staging))
+    monkeypatch.setattr(
+        "streamrip.client.downloadable.register_recovery",
+        lambda *_args: (_ for _ in ()).throw(OSError("registry unavailable")),
+    )
+
+    with pytest.raises(PublishError) as error:
+        await BytesDownloadable(b"verified-source").download(
+            os.fspath(destination), lambda _size: None
+        )
+
+    assert error.value.retained_path.read_bytes() == b"verified-source"
+    assert "recovery registration failed: registry unavailable" in str(error.value)

@@ -494,6 +494,63 @@ def login_logout(ctx, service, yes):
     console.print(f"[green]Removed the stored {service} session.[/green]")
 
 
+@rip.group("recovery")
+def recovery_group():
+    """Inspect and recover verified media staging files."""
+
+
+@recovery_group.command("list")
+def recovery_list():
+    """List verified staging files retained after publication failures."""
+
+    from ..file_publish import list_recoveries
+
+    entries = list_recoveries()
+    if not entries:
+        console.print("No retained staging files.")
+        return
+    for entry in entries:
+        console.print(
+            f"{entry.id}  {entry.size} bytes  {entry.destination_path}"
+        )
+
+
+@recovery_group.command("retry")
+@click.argument("entry_id")
+@coro
+async def recovery_retry(entry_id):
+    """Retry atomic publication of one unchanged retained staging file."""
+
+    from ..file_publish import RecoveryError, retry_recovery
+
+    try:
+        entry = await retry_recovery(entry_id.lower())
+    except (RecoveryError, OSError) as error:
+        raise click.ClickException(str(error)) from None
+    console.print(f"[green]Recovered {entry.destination_path}.[/green]")
+
+
+@recovery_group.command("discard")
+@click.argument("entry_id")
+@click.option("-y", "--yes", is_flag=True, help="Do not ask for confirmation.")
+def recovery_discard(entry_id, yes):
+    """Delete one verified retained stage and its recovery record."""
+
+    from ..file_publish import RecoveryError, get_recovery, remove_recovery
+
+    try:
+        entry = get_recovery(entry_id.lower())
+        if not yes and not Confirm.ask(
+            f"Permanently delete retained staging file for {entry.destination_path}?"
+        ):
+            console.print("Discard aborted")
+            return
+        remove_recovery(entry.id, delete_staging=True)
+    except (RecoveryError, OSError) as error:
+        raise click.ClickException(str(error)) from None
+    console.print("[green]Removed the retained staging file and recovery record.[/green]")
+
+
 @rip.group()
 def database():
     """View and modify the downloads and failed downloads databases."""

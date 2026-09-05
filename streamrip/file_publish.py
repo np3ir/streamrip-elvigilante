@@ -4,18 +4,56 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import shutil
 import uuid
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+
+import click
+
+RECOVERY_VERSION = 1
+
+
+def default_recovery_directory() -> Path:
+    return Path(click.get_app_dir("streamrip")) / "publish-recovery"
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryEntry:
+    """A verified staging file waiting to be published."""
+
+    id: str
+    created_at: str
+    staging_path: str
+    destination_path: str
+    size: int
+    sha256: str
+    version: int = RECOVERY_VERSION
+
+
+class RecoveryError(OSError):
+    """A recovery entry is invalid, unsafe, or cannot be processed."""
 
 
 class PublishError(OSError):
     """The verified staging file could not be published and was retained."""
 
     def __init__(self, message: str, retained_path: Path):
-        super().__init__(f"{message}; verified staging retained at {retained_path}")
+        super().__init__(message)
         self.retained_path = retained_path
+        self.recovery_id: str | None = None
+        self.recovery_error: str | None = None
+
+    def __str__(self) -> str:
+        detail = f"{self.args[0]}; verified staging retained at {self.retained_path}"
+        if self.recovery_id is not None:
+            return f"{detail}; recovery ID {self.recovery_id}"
+        if self.recovery_error is not None:
+            return f"{detail}; recovery registration failed: {self.recovery_error}"
+        return detail
 
 
 def _fsync_file(path: Path) -> None:
@@ -49,6 +87,133 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _entry_path(entry_id: str, directory: Path) -> Path:
+    if not entry_id or any(character not in "0123456789abcdef" for character in entry_id):
+        raise RecoveryError("invalid recovery ID")
+    return directory / f"{entry_id}.json"
+
+
+def register_recovery(
+    staging_path: str | Path,
+    destination_path: str | Path,
+    *,
+    directory: str | Path | None = None,
+) -> RecoveryEntry:
+    """Atomically register a verified stage without moving or modifying it."""
+
+    try:
+        staging = Path(staging_path).resolve(strict=True)
+    except OSError as error:
+        raise RecoveryError("staging file is unavailable") from error
+    destination = Path(destination_path).resolve(strict=False)
+    if not staging.is_file() or staging.stat().st_size <= 0:
+        raise RecoveryError("staging file is missing or empty")
+
+    entry = RecoveryEntry(
+        id=uuid.uuid4().hex,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        staging_path=os.fspath(staging),
+        destination_path=os.fspath(destination),
+        size=staging.stat().st_size,
+        sha256=_sha256(staging),
+    )
+    recovery_dir = Path(directory) if directory is not None else default_recovery_directory()
+    recovery_dir.mkdir(parents=True, exist_ok=True)
+    final = _entry_path(entry.id, recovery_dir)
+    temporary = recovery_dir / f".{entry.id}.{uuid.uuid4().hex}.tmp"
+    try:
+        temporary.write_text(json.dumps(asdict(entry), indent=2), encoding="utf-8")
+        _fsync_file(temporary)
+        os.replace(temporary, final)
+        _fsync_directory(recovery_dir)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+    return entry
+
+
+def list_recoveries(*, directory: str | Path | None = None) -> list[RecoveryEntry]:
+    """Return valid recovery entries in creation order."""
+
+    recovery_dir = Path(directory) if directory is not None else default_recovery_directory()
+    if not recovery_dir.is_dir():
+        return []
+    entries: list[RecoveryEntry] = []
+    for path in recovery_dir.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            entry = RecoveryEntry(**data)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if path.name == f"{entry.id}.json" and entry.version == RECOVERY_VERSION:
+            entries.append(entry)
+    return sorted(entries, key=lambda entry: (entry.created_at, entry.id))
+
+
+def get_recovery(
+    entry_id: str, *, directory: str | Path | None = None
+) -> RecoveryEntry:
+    recovery_dir = Path(directory) if directory is not None else default_recovery_directory()
+    path = _entry_path(entry_id.lower(), recovery_dir)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        entry = RecoveryEntry(**data)
+    except FileNotFoundError as error:
+        raise RecoveryError(f"recovery entry not found: {entry_id}") from error
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise RecoveryError(f"invalid recovery entry: {entry_id}") from error
+    if entry.id != entry_id.lower() or entry.version != RECOVERY_VERSION:
+        raise RecoveryError(f"invalid recovery entry: {entry_id}")
+    return entry
+
+
+def _validate_recovery_stage(entry: RecoveryEntry) -> Path:
+    staging = Path(entry.staging_path)
+    try:
+        size = staging.stat().st_size
+    except OSError as error:
+        raise RecoveryError("retained staging file is unavailable") from error
+    if not staging.is_file() or size != entry.size or _sha256(staging) != entry.sha256:
+        raise RecoveryError("retained staging file no longer matches its verified record")
+    return staging
+
+
+def remove_recovery(
+    entry_id: str,
+    *,
+    delete_staging: bool = False,
+    directory: str | Path | None = None,
+) -> RecoveryEntry:
+    """Remove one record, optionally deleting its still-verified staging file."""
+
+    recovery_dir = Path(directory) if directory is not None else default_recovery_directory()
+    entry = get_recovery(entry_id, directory=recovery_dir)
+    if delete_staging:
+        staging = _validate_recovery_stage(entry)
+        try:
+            staging.unlink()
+        except OSError as error:
+            raise RecoveryError("could not delete retained staging file") from error
+    _entry_path(entry.id, recovery_dir).unlink()
+    _fsync_directory(recovery_dir)
+    return entry
+
+
+async def retry_recovery(
+    entry_id: str, *, directory: str | Path | None = None
+) -> RecoveryEntry:
+    """Publish one unchanged retained stage and remove its record on success."""
+
+    recovery_dir = Path(directory) if directory is not None else default_recovery_directory()
+    entry = get_recovery(entry_id, directory=recovery_dir)
+    staging = await asyncio.to_thread(_validate_recovery_stage, entry)
+    await publish_verified_file(staging, entry.destination_path)
+    await asyncio.to_thread(remove_recovery, entry.id, directory=recovery_dir)
+    return entry
 
 
 def _same_volume(source: Path, destination_parent: Path) -> bool:
