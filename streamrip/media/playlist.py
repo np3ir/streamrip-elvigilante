@@ -13,7 +13,7 @@ from rich.text import Text
 from .. import progress
 from ..client import Client
 from ..config import Config
-from ..console import console
+from ..console import console, console_status
 from ..db import Database
 from ..destination_identity import guard_configured_write
 from ..exceptions import NonStreamableError
@@ -309,7 +309,7 @@ class PendingLastfmPlaylist(Pending):
         s = self.Status(0, 0, len(titles_artists))
         
         if self.config.session.cli.progress_bars:
-            with console.status(s.text(), spinner="moon") as status:
+            with console_status(s.text(), spinner="moon") as status:
                 def callback(): status.update(s.text())
                 for title, artist in titles_artists:
                     requests.append(self._make_query(f"{title} {artist}", s, callback))

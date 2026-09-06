@@ -12,7 +12,7 @@ import aiofiles
 from .. import db
 from ..client import Client, DeezerClient, QobuzClient, SoundcloudClient, TidalClient
 from ..config import Config
-from ..console import console
+from ..console import console, console_status
 from ..exceptions import AuthenticationError, MissingCredentialsError
 from ..media import (
     PendingAlbum,
@@ -236,7 +236,7 @@ class Main:
 
         client = await self.get_logged_in_client(source)
         limit = self.config.session.cli.max_search_results
-        with console.status(f"[bold]Searching {source}", spinner="dots"):
+        with console_status(f"[bold]Searching {source}", spinner="dots"):
             pages = await client.search(media_type, query, limit=limit)
             if not pages:
                 console.print(f"[red]No search results found for query {query}")
@@ -292,7 +292,7 @@ class Main:
         """Queue only the first normalized search result."""
 
         client = await self.get_logged_in_client(source)
-        with console.status(f"[bold]Searching {source}", spinner="dots"):
+        with console_status(f"[bold]Searching {source}", spinner="dots"):
             pages = await client.search(media_type, query, limit=1)
         if not pages:
             console.print(f"[red]No search results found for query {query}")
@@ -311,7 +311,7 @@ class Main:
         """Write normalized search results as an importable JSON list."""
 
         client = await self.get_logged_in_client(source)
-        with console.status(f"[bold]Searching {source}", spinner="dots"):
+        with console_status(f"[bold]Searching {source}", spinner="dots"):
             pages = await client.search(media_type, query, limit=limit)
         if not pages:
             console.print(f"[red]No search results found for query {query}")

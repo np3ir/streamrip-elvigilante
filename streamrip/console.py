@@ -1,4 +1,5 @@
 import sys
+from contextlib import contextmanager
 
 from rich.console import Console
 from rich.text import Text
@@ -14,6 +15,26 @@ if sys.platform == "win32":
         pass
 
 console = Console()
+
+
+class _QuietStatus:
+    def update(self, *_args, **_kwargs):
+        """Match Rich Status.update when live rendering is unavailable."""
+
+
+@contextmanager
+def console_status(*args, **kwargs):
+    """Render a spinner only on an interactive terminal.
+
+    Rich live displays are inappropriate for redirected output and can collide
+    with an existing progress display. Plain output remains fully functional.
+    """
+
+    if not console.is_terminal or getattr(console, "_live", None) is not None:
+        yield _QuietStatus()
+        return
+    with console.status(*args, **kwargs) as status:
+        yield status
 
 def print_banner():
     banner_text = r"""
