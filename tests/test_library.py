@@ -69,12 +69,18 @@ async def test_playlist_tracks_preserve_order_and_recording_keys():
 
 @pytest.mark.asyncio
 async def test_playlist_album_expansion_fetches_each_album_once():
+    album_response = {
+        "id": "a1",
+        "releaseDate": "2013-06-10",
+        "streamStartDate": "2026-01-28T00:00:00.000+0000",
+        "tracks": [track("x1", "X1", "a1")],
+    }
     client = FakeClient(
         {
             ("p1", "playlist"): {
                 "tracks": [track("t1", "I1", "a1"), track("t2", "I2", "a1")]
             },
-            ("a1", "album"): {"tracks": [track("x1", "X1", "a1")]},
+            ("a1", "album"): album_response,
         }
     )
 
@@ -82,6 +88,7 @@ async def test_playlist_album_expansion_fetches_each_album_once():
 
     assert [item.source_id for item in result] == ["x1"]
     assert client.calls.count(("a1", "album")) == 1
+    assert result[0].album_metadata is album_response
 
 
 @pytest.mark.asyncio
@@ -253,6 +260,43 @@ async def test_pending_library_track_reuses_metadata_after_tidal_breaker(tmp_pat
         album, "tidal", cached, DEFAULT_ARTIST_SEPARATOR
     )
     reference.get_metadata.assert_awaited_once_with("t1", "track")
+
+
+@pytest.mark.asyncio
+async def test_pending_library_track_reuses_complete_album_metadata():
+    config = Config("tests/test_config.toml")
+    cached_album = {
+        "id": "a1",
+        "releaseDate": "2013-06-10",
+        "streamStartDate": "2026-01-28T00:00:00.000+0000",
+    }
+    reference = Mock(source="tidal")
+    reference.get_metadata = AsyncMock()
+    canonical = Mock()
+    pending = PendingLibraryTrack(
+        "t1",
+        reference,
+        "d1",
+        Mock(),
+        2,
+        config,
+        Mock(),
+        album_metadata=cached_album,
+    )
+
+    with patch(
+        "streamrip.library.AlbumMetadata.from_album_resp",
+        return_value=canonical,
+    ) as build_album:
+        result = await pending._canonical_album(
+            {"album": {"id": "a1"}}, DEFAULT_ARTIST_SEPARATOR
+        )
+
+    assert result is canonical
+    build_album.assert_called_once_with(
+        cached_album, "tidal", DEFAULT_ARTIST_SEPARATOR
+    )
+    reference.get_metadata.assert_not_awaited()
 
 
 @pytest.mark.asyncio

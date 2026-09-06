@@ -44,6 +44,7 @@ class LibraryTrack:
     album_id: str | None = None
     album_title: str | None = None
     reference_metadata: dict = field(default_factory=dict, repr=False, compare=False)
+    album_metadata: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def recording_key(self) -> str:
@@ -68,6 +69,7 @@ class PendingLibraryTrack(Pending):
     config: Config
     db: Database
     reference_metadata: dict | None = field(default=None, repr=False)
+    album_metadata: dict | None = field(default=None, repr=False)
     lyrics_sources: tuple[tuple[object, str], ...] = field(
         default_factory=tuple, repr=False
     )
@@ -133,6 +135,12 @@ class PendingLibraryTrack(Pending):
         self, response: dict, artist_separator: str
     ) -> AlbumMetadata:
         source = self.reference_client.source
+        if self.album_metadata:
+            cached_album = AlbumMetadata.from_album_resp(
+                self.album_metadata, source, artist_separator
+            )
+            if cached_album is not None:
+                return cached_album
         album_id = (response.get("album") or {}).get("id")
         if album_id:
             try:
@@ -177,7 +185,9 @@ def _items(response: dict) -> list[dict]:
     return [item for item in tracks if isinstance(item, dict)]
 
 
-def _library_track(source: str, item: dict) -> LibraryTrack | None:
+def _library_track(
+    source: str, item: dict, album_metadata: dict | None = None
+) -> LibraryTrack | None:
     identity = track_identity(source, item)
     if not identity.source_id:
         return None
@@ -191,6 +201,7 @@ def _library_track(source: str, item: dict) -> LibraryTrack | None:
         album_id=str(album.get("id")) if album.get("id") is not None else None,
         album_title=album.get("title"),
         reference_metadata=item,
+        album_metadata=album_metadata or {},
     )
 
 
@@ -219,8 +230,8 @@ def _artist_ids(items: Iterable[dict]) -> list[str]:
     return _unique_ids(ids)
 
 
-async def _album_tracks(client, album_id: str) -> list[dict]:
-    return _items(await client.get_metadata(album_id, "album"))
+async def _album_response(client, album_id: str) -> dict:
+    return await client.get_metadata(album_id, "album")
 
 
 async def iter_library_tracks(
@@ -241,15 +252,16 @@ async def iter_library_tracks(
     response = await client.get_metadata(item_id, media_type)
     if media_type in {"album", "mix"}:
         for item in _items(response):
-            if track := _library_track(source, item):
+            if track := _library_track(source, item, response):
                 yield track
         return
 
     if media_type == "artist":
         artist = ArtistMetadata.from_resp(response, source)
         for album_id in _unique_ids(str(value) for value in artist.album_ids()):
-            for item in await _album_tracks(client, album_id):
-                if track := _library_track(source, item):
+            album_response = await _album_response(client, album_id)
+            for item in _items(album_response):
+                if track := _library_track(source, item, album_response):
                     yield track
         return
 
@@ -280,8 +292,9 @@ async def iter_library_tracks(
             if album_id in seen_album_ids:
                 continue
             seen_album_ids.add(album_id)
-            for item in await _album_tracks(client, album_id):
-                if track := _library_track(source, item):
+            album_response = await _album_response(client, album_id)
+            for item in _items(album_response):
+                if track := _library_track(source, item, album_response):
                     yield track
 
 
@@ -390,4 +403,5 @@ def track_asdict(track: LibraryTrack) -> dict:
 
     serialized = asdict(track)
     serialized.pop("reference_metadata", None)
+    serialized.pop("album_metadata", None)
     return serialized

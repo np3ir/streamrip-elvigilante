@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -13,6 +14,7 @@ from streamrip.rip.cli import (
     _compare_with_reference_failover,
     _get_logged_in_client_bounded,
     _is_help_invocation,
+    coro,
     rip,
 )
 
@@ -52,6 +54,26 @@ def test_library_command_registers_mass_processing_safety_options():
 def test_help_invocation_is_detected_before_config_loading():
     assert _is_help_invocation(["compare", "--help"]) is True
     assert _is_help_invocation(["compare", "tidal", "123"]) is False
+
+
+def test_coro_renders_tidal_safety_stop_without_traceback(monkeypatch):
+    progress_cleared = False
+
+    def clear():
+        nonlocal progress_cleared
+        progress_cleared = True
+
+    monkeypatch.setattr("streamrip.rip.cli.clear_progress", clear)
+
+    @click.command()
+    @coro
+    async def command():
+        raise TidalRateLimitError("TIDAL safety limit reached")
+
+    with pytest.raises(click.ClickException, match="run stopped safely"):
+        command.callback()
+
+    assert progress_cleared is True
 
 
 def test_compare_help_does_not_migrate_config(tmp_path, monkeypatch):

@@ -21,6 +21,7 @@ from .. import __version__, db
 from ..config import DEFAULT_CONFIG_PATH, Config, OutdatedConfigError, set_user_defaults
 from ..console import console
 from ..exceptions import ReferenceIdentityUnavailableError, TidalRateLimitError
+from ..progress import clear_progress
 from ..utils.ssl_utils import get_aiohttp_connector_kwargs
 from .main import Main
 
@@ -28,7 +29,14 @@ from .main import Main
 def coro(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        return asyncio.run(f(*args, **kwargs))
+        try:
+            return asyncio.run(f(*args, **kwargs))
+        except TidalRateLimitError as error:
+            raise click.ClickException(
+                f"{error}. The run stopped safely; retry later."
+            ) from error
+        finally:
+            clear_progress()
 
     return wrapper
 
@@ -1421,6 +1429,7 @@ async def library(
                         audio_client=clients[winner],
                         audio_quality=qualities[winner],
                         reference_metadata=track.reference_metadata,
+                        album_metadata=track.album_metadata,
                         lyrics_sources=lyrics_sources,
                         completion_callback=mark_completed,
                         failure_callback=mark_download_failed,
