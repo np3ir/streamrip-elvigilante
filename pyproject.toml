@@ -38,6 +38,7 @@ aiolimiter = "^1.1.0"
 pytest-mock = "^3.11.1"
 pytest-asyncio = "^0.21.1"
 rich = ">=13.6,<16"
+click = ">=8.2,<9"
 click-help-colors = "^0.9.2"
 certifi = { version = "^2025.1.31", optional = true }
 pywebview = { version = ">=5,<7", optional = true, platform = "win32" }
