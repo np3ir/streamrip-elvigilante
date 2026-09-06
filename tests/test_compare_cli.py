@@ -46,6 +46,7 @@ def test_library_command_registers_mass_processing_safety_options():
     assert "workers" in names
     assert "manifest" in names
     assert "manifest_path" in names
+    assert "save_lyrics" in names
 
 
 def test_help_invocation_is_detected_before_config_loading():

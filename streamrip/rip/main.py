@@ -80,6 +80,7 @@ class Main:
 
         self.queue = asyncio.Queue()
         self.producer_tasks = []
+        self.download_workers: list[asyncio.Task] = []
         self.skipped_items = 0  # count of items skipped due to errors
 
     async def add(self, url: str):
@@ -168,6 +169,7 @@ class Main:
         audio_client: Client,
         audio_quality: int,
         reference_metadata: dict | None = None,
+        lyrics_sources: tuple[tuple[Client, str], ...] = (),
         completion_callback: Callable[[str], None] | None = None,
         failure_callback: Callable[[str], None] | None = None,
     ):
@@ -185,6 +187,7 @@ class Main:
                 config=self.config,
                 db=self.database,
                 reference_metadata=reference_metadata,
+                lyrics_sources=lyrics_sources,
                 completion_callback=completion_callback,
                 failure_callback=failure_callback,
             )
@@ -216,20 +219,38 @@ class Main:
         pass
 
     async def rip(self):
-        workers = [asyncio.create_task(self.worker_loop(i)) for i in range(4)]
+        self.start_download_workers()
         if self.producer_tasks:
             await asyncio.gather(*self.producer_tasks)
 
-        await self.queue.join()
-
-        for w in workers:
-            w.cancel()
+        await self.finish_download_workers()
 
         # Clean end summary
         if self.skipped_items > 5:
             console.print(f"[yellow]⚠ Skipped {self.skipped_items} item(s) due to metadata errors.[/yellow]")
 
         clear_progress()
+
+    def start_download_workers(self, count: int = 4, queue_size: int = 8) -> None:
+        """Start persistent consumers for a bounded streaming producer."""
+        if self.download_workers:
+            return
+        if self.queue.empty() and self.queue.maxsize == 0:
+            self.queue = asyncio.Queue(maxsize=max(count, queue_size))
+        self.download_workers = [
+            asyncio.create_task(self.worker_loop(worker_id))
+            for worker_id in range(max(1, count))
+        ]
+
+    async def finish_download_workers(self) -> None:
+        """Drain queued media and stop all persistent consumers."""
+        if not self.download_workers:
+            return
+        await self.queue.join()
+        workers, self.download_workers = self.download_workers, []
+        for worker in workers:
+            worker.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
 
     async def search_interactive(self, source: str, media_type: str, query: str):
         """Search and queue the items explicitly selected in a terminal menu."""
@@ -397,6 +418,11 @@ class Main:
         return self
 
     async def __aexit__(self, *_):
+        workers, self.download_workers = self.download_workers, []
+        for worker in workers:
+            worker.cancel()
+        if workers:
+            await asyncio.gather(*workers, return_exceptions=True)
         for client in self.clients.values():
             if hasattr(client, "close"):
                 await client.close()

@@ -129,7 +129,7 @@ class MetadataConfig:
     set_playlist_to_album: bool
     renumber_playlist_tracks: bool
     exclude: list[str]
-    artist_separator: str = ", "
+    artist_separator: str = " / "
 
 
 @dataclass(slots=True)

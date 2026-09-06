@@ -3,10 +3,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from streamrip.filepath_utils import clean_filename
 from streamrip.media.album import PendingAlbum
 from streamrip.metadata.album import AlbumInfo, AlbumMetadata
 from streamrip.metadata.covers import Covers
 from streamrip.metadata.track import TrackInfo, TrackMetadata
+from streamrip.metadata.util import DEFAULT_ARTIST_SEPARATOR
 
 
 def metadata_for(source: str) -> TrackMetadata:
@@ -42,6 +44,13 @@ def metadata_for(source: str) -> TrackMetadata:
         isrc="AA0000000001",
         version="Remix",
     )
+
+
+def test_default_artist_separator_matches_tiddl_filename_style():
+    assert DEFAULT_ARTIST_SEPARATOR == " / "
+    assert clean_filename(
+        DEFAULT_ARTIST_SEPARATOR.join(("White Lion", "Lioness"))
+    ) == "White Lion ／ Lioness"
 
 
 @pytest.mark.parametrize("source", ["tidal", "deezer", "qobuz"])

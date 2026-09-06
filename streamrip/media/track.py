@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import tempfile
 from dataclasses import dataclass
 from typing import Callable
 
@@ -59,6 +60,7 @@ class Track(Media):
 
         # 1. Exact path match
         if os.path.isfile(self.download_path):
+            self._save_lrc_sidecar()
             console.print(f"[yellow]Skipped (Exists)[/]: {self.meta.title}")
             if not self.db.downloaded(self.meta.info.id):
                 self.db.set_downloaded(self.meta.info.id)
@@ -182,21 +184,48 @@ class Track(Media):
                         if self.failure_callback is not None:
                             self.failure_callback(self.download_path)
 
+    def _save_lrc_sidecar(self) -> None:
+        """Write fetched lyrics beside the canonical audio file.
+
+        This is intentionally safe to call when the audio already exists so a
+        later run can repair a missing sidecar without downloading the audio
+        again. Existing LRC content is replaced only when fresh content was
+        fetched successfully.
+        """
+        if not self.lrc_content:
+            return
+        lrc_path = os.path.splitext(self.download_path)[0] + ".lrc"
+        guard_configured_write(self.config, lrc_path)
+        temporary_path = ""
+        try:
+            descriptor, temporary_path = tempfile.mkstemp(
+                prefix=f".{os.path.basename(lrc_path)}.",
+                suffix=".tmp",
+                dir=os.path.dirname(lrc_path),
+            )
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as lrc_file:
+                lrc_file.write(self.lrc_content)
+                lrc_file.flush()
+                os.fsync(lrc_file.fileno())
+            os.replace(temporary_path, lrc_path)
+            logger.debug("Saved LRC: %s", lrc_path)
+        except OSError as error:
+            logger.warning("Could not save LRC file %s: %s", lrc_path, error)
+        finally:
+            if temporary_path and os.path.exists(temporary_path):
+                try:
+                    os.remove(temporary_path)
+                except OSError:
+                    logger.warning(
+                        "Could not remove temporary LRC file %s", temporary_path
+                    )
+
     async def postprocess(self):
         if self.is_single: remove_title(self.meta.title)
         guard_configured_write(self.config, self.download_path)
         await tag_file(self.download_path, self.meta, self.cover_path)
         if self.config.session.conversion.enabled: await self._convert()
-        # Save .lrc sidecar file when lyrics were fetched
-        if self.lrc_content:
-            lrc_path = os.path.splitext(self.download_path)[0] + ".lrc"
-            guard_configured_write(self.config, lrc_path)
-            try:
-                with open(lrc_path, "w", encoding="utf-8") as lrc_file:
-                    lrc_file.write(self.lrc_content)
-                logger.debug("Saved LRC: %s", lrc_path)
-            except OSError as e:
-                logger.warning("Could not save LRC file %s: %s", lrc_path, e)
+        self._save_lrc_sidecar()
         self.db.set_downloaded(self.meta.info.id)
         self.db.set_isrc_downloaded(self.meta.isrc)
         basename = os.path.basename(self.download_path)

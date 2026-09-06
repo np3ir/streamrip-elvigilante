@@ -235,7 +235,11 @@ class DeezerDownloadable(Downloadable):
     is_encrypted = re.compile("/m(?:obile|edia)/")
 
     def __init__(self, session: aiohttp.ClientSession, info: dict):
-        logger.debug("Deezer info for downloadable: %s", info)
+        logger.debug(
+            "Initialized Deezer downloadable for track %s at quality tier %s",
+            info.get("id", "unknown"),
+            info.get("quality", "unknown"),
+        )
         self.session = session
         self.url = info["url"]
         self.source: str = "deezer"

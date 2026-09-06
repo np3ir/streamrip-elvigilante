@@ -17,6 +17,7 @@ from streamrip.library import (
     library_job_signature,
 )
 from streamrip.media.track import Track
+from streamrip.metadata.util import DEFAULT_ARTIST_SEPARATOR
 from streamrip.rip.main import Main
 
 
@@ -185,7 +186,7 @@ async def test_pending_library_track_combines_reference_metadata_with_winner_aud
             new=AsyncMock(return_value=("cover.jpg", None)),
         ),
         patch(
-            "streamrip.library.fetch_lrc",
+                "streamrip.library.fetch_lrc_from_sources",
             new=AsyncMock(return_value="lyrics"),
         ),
     ):
@@ -199,7 +200,9 @@ async def test_pending_library_track_combines_reference_metadata_with_winner_aud
         tmp_path / "Tidal" / "Canonical Artist" / "Canonical Album"
     )
     assert resolved.folder == os.path.normpath(resolved.folder)
-    build_metadata.assert_called_once_with(album, "tidal", {"id": "t1"}, ", ")
+    build_metadata.assert_called_once_with(
+        album, "tidal", {"id": "t1"}, DEFAULT_ARTIST_SEPARATOR
+    )
     winner.get_downloadable.assert_awaited_once_with("d1", 2)
 
 
@@ -238,12 +241,17 @@ async def test_pending_library_track_reuses_metadata_after_tidal_breaker(tmp_pat
             "streamrip.library.download_artwork",
             new=AsyncMock(return_value=(None, None)),
         ),
-        patch("streamrip.library.fetch_lrc", new=AsyncMock(return_value=None)),
+        patch(
+            "streamrip.library.fetch_lrc_from_sources",
+            new=AsyncMock(return_value=None),
+        ),
     ):
         resolved = await pending.resolve()
 
     assert resolved.meta is metadata
-    build_metadata.assert_called_once_with(album, "tidal", cached, ", ")
+    build_metadata.assert_called_once_with(
+        album, "tidal", cached, DEFAULT_ARTIST_SEPARATOR
+    )
     reference.get_metadata.assert_awaited_once_with("t1", "track")
 
 
@@ -272,6 +280,37 @@ async def test_track_completion_callback_runs_for_verified_existing_file(tmp_pat
     await item.rip()
 
     completed.assert_called_once_with(str(tmp_path / "Canonical.flac"))
+
+
+@pytest.mark.asyncio
+async def test_existing_audio_repairs_missing_lrc_without_redownload(tmp_path):
+    config = Config("tests/test_config.toml")
+    metadata = Mock(title="Canonical", artist="Artist", isrc="ISRC1")
+    metadata.info = Mock(id="t1", explicit=False)
+    metadata.format_track_path.return_value = "Canonical"
+    downloadable = Mock(source="tidal", extension="flac")
+    downloadable.download = AsyncMock()
+    database = Mock()
+    database.downloaded.return_value = True
+    database.isrc_downloaded.return_value = True
+    audio_path = tmp_path / "Canonical.flac"
+    audio_path.write_bytes(b"existing")
+    item = Track(
+        metadata,
+        downloadable,
+        config,
+        str(tmp_path),
+        None,
+        database,
+        lrc_content="[00:01.00]Lyrics",
+    )
+
+    await item.rip()
+
+    assert (tmp_path / "Canonical.lrc").read_text(encoding="utf-8") == (
+        "[00:01.00]Lyrics"
+    )
+    downloadable.download.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -373,6 +412,29 @@ async def test_worker_reports_each_library_failure_once(failure_stage):
 
     failed.assert_called_once_with("")
     assert main.skipped_items == 1
+
+
+@pytest.mark.asyncio
+async def test_persistent_workers_consume_before_streaming_producer_finishes():
+    main = Main.__new__(Main)
+    main.queue = asyncio.Queue()
+    main.producer_tasks = []
+    main.download_workers = []
+    main.skipped_items = 0
+    ripped = asyncio.Event()
+    media = Mock()
+    media.rip = AsyncMock(side_effect=lambda: ripped.set())
+    pending = Mock()
+    pending.resolve = AsyncMock(return_value=media)
+
+    main.start_download_workers(count=1, queue_size=2)
+    await main.queue.put(pending)
+    await asyncio.wait_for(ripped.wait(), timeout=1)
+
+    assert main.queue.maxsize == 2
+    assert main.download_workers
+    await main.finish_download_workers()
+    assert main.download_workers == []
 
 
 @pytest.mark.asyncio

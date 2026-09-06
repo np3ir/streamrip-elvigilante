@@ -313,7 +313,11 @@ class DeezerClient(Client):
             raise NonStreamableError(f"Could not get download URL for track {item_id}: {e}")
 
         dl_info["url"] = url
-        logger.debug("dz track info: %s", track_info)
+        logger.debug(
+            "Prepared Deezer stream metadata for track %s at quality tier %s",
+            item_id,
+            actual_quality,
+        )
         return DeezerDownloadable(self.session, dl_info)
 
     async def get_lyrics(self, track_id: str) -> str | None:

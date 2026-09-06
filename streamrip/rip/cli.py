@@ -1101,6 +1101,10 @@ async def id(ctx, source, media_type, id):
     "--max-sample-rate", type=click.FloatRange(min=1),
     help="Maximum sample rate in kHz for this job.",
 )
+@click.option(
+    "--save-lyrics/--no-save-lyrics", default=None,
+    help="Save synchronized .lrc sidecars for this job.",
+)
 @click.argument("url")
 @click.pass_context
 @coro
@@ -1116,6 +1120,7 @@ async def library(
     service_priority,
     max_bit_depth,
     max_sample_rate,
+    save_lyrics,
     url,
 ):
     """Build a resumable best-quality library plan from a service URL."""
@@ -1141,6 +1146,8 @@ async def library(
         raise click.UsageError(f"Unsupported library URL type: {media_type}")
 
     with ctx.obj["config"] as cfg:
+        if save_lyrics is not None:
+            cfg.session.lyrics.save_lrc = save_lyrics
         policy = cfg.session.comparison
         bit_depth = max_bit_depth if max_bit_depth is not None else (
             policy.max_bit_depth or None
@@ -1171,6 +1178,7 @@ async def library(
                 "prefer_lossless": ceiling.prefer_lossless,
                 "fallback_to_lossy": ceiling.fallback_to_lossy,
                 "priority": priority,
+                "save_lyrics": cfg.session.lyrics.save_lrc,
             }
         )
         checkpoint = LibraryCheckpoint(signature).load()
@@ -1217,7 +1225,11 @@ async def library(
             failed = 0
             winners: dict[str, int] = {}
             seen: set[str] = set()
-            queued = []
+            if not dry_run:
+                main.start_download_workers(
+                    count=min(4, comparison_workers),
+                    queue_size=max(4, comparison_workers * 2),
+                )
 
             console.print(
                 f"[bold cyan]Library job[/bold cyan] — {media_type} → {expansion}; "
@@ -1352,12 +1364,12 @@ async def library(
                             bit_depth=quality.bit_depth,
                             sample_rate_hz=quality.sample_rate_hz,
                         )
-                    queued.append((track, selected, key))
-
-            if queued:
-                for track, selected, key in queued:
-                    winner = selected.identity.source
-
+                    lyrics_sources = tuple(
+                        (clients[service], candidate.identity.source_id)
+                        for service in ("tidal", "deezer")
+                        for candidate in report.candidates
+                        if candidate.identity.source == service and service in clients
+                    )
                     def mark_completed(path, *, track=track, selected=selected, key=key):
                         checkpoint.mark_done(key)
                         if audit is not None:
@@ -1409,10 +1421,13 @@ async def library(
                         audio_client=clients[winner],
                         audio_quality=qualities[winner],
                         reference_metadata=track.reference_metadata,
+                        lyrics_sources=lyrics_sources,
                         completion_callback=mark_completed,
                         failure_callback=mark_download_failed,
                     )
-                await main.rip()
+
+            if not dry_run:
+                await main.finish_download_workers()
 
             summary = ", ".join(
                 f"{service}: {count}" for service, count in winners.items()

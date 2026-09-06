@@ -5,7 +5,7 @@ from typing import Iterable, Optional, Type, TypeVar
 # Default separator used to join multiple artists when no config is available.
 # All public dispatchers (from_resp, from_track_resp, from_album_resp) use this
 # as their default so there is a single source of truth.
-DEFAULT_ARTIST_SEPARATOR: str = ", "
+DEFAULT_ARTIST_SEPARATOR: str = " / "
 
 
 def normalize_artist_name(name: str) -> str:

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from collections.abc import Iterable
 
 import aiohttp
 
@@ -33,3 +34,22 @@ async def fetch_lrc(client: Client, track_id: str, config: Config) -> str | None
     ) as e:
         logger.debug("Could not fetch lyrics for track %s: %s", track_id, e)
         return None
+
+
+async def fetch_lrc_from_sources(
+    sources: Iterable[tuple[Client, str]], config: Config
+) -> str | None:
+    """Return lyrics from the first capable matched source that has them."""
+    if not config.session.lyrics.save_lrc:
+        return None
+    seen: set[tuple[str, str]] = set()
+    for client, track_id in sources:
+        key = (str(getattr(client, "source", "")), str(track_id))
+        if key in seen:
+            continue
+        seen.add(key)
+        lyrics = await fetch_lrc(client, str(track_id), config)
+        if lyrics:
+            logger.debug("Lyrics resolved from %s track %s", key[0], key[1])
+            return lyrics
+    return None

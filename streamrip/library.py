@@ -17,12 +17,13 @@ import click
 
 from .client.candidate import track_identity
 from .config import Config
+from .console import console
 from .db import Database
 from .destination_identity import guard_configured_write
 from .exceptions import TidalRateLimitError
 from .filepath_utils import clean_filepath
 from .media.artwork import download_artwork
-from .media.lyrics import fetch_lrc
+from .media.lyrics import fetch_lrc_from_sources
 from .media.media import Pending
 from .media.track import Track
 from .metadata import AlbumMetadata, ArtistMetadata, TrackMetadata
@@ -67,6 +68,9 @@ class PendingLibraryTrack(Pending):
     config: Config
     db: Database
     reference_metadata: dict | None = field(default=None, repr=False)
+    lyrics_sources: tuple[tuple[object, str], ...] = field(
+        default_factory=tuple, repr=False
+    )
     completion_callback: Callable[[str], None] | None = None
     failure_callback: Callable[[str], None] | None = None
 
@@ -106,7 +110,12 @@ class PendingLibraryTrack(Pending):
             self.config.session.artwork,
             for_playlist=False,
         )
-        lyrics = await fetch_lrc(self.reference_client, self.reference_id, self.config)
+        sources = self.lyrics_sources or (
+            (self.reference_client, self.reference_id),
+        )
+        lyrics = await fetch_lrc_from_sources(sources, self.config)
+        if self.config.session.lyrics.save_lrc and not lyrics:
+            console.print(f"[dim]Lyrics unavailable: {metadata.title}[/dim]")
         return Track(
             metadata,
             downloadable,
