@@ -20,7 +20,7 @@ from rich.traceback import install
 from .. import __version__, db
 from ..config import DEFAULT_CONFIG_PATH, Config, OutdatedConfigError, set_user_defaults
 from ..console import console
-from ..exceptions import TidalRateLimitError
+from ..exceptions import ReferenceIdentityUnavailableError, TidalRateLimitError
 from ..utils.ssl_utils import get_aiohttp_connector_kwargs
 from .main import Main
 
@@ -74,8 +74,20 @@ async def _compare_with_reference_failover(
     except TidalRateLimitError as error:
         if source != "tidal":
             raise
+        identity = track_identity(source, metadata)
+        has_exact_identity = bool((identity.isrc or "").strip())
+        has_safe_fallback_identity = bool(
+            identity.source_id
+            and identity.title.strip()
+            and identity.artist.strip()
+        )
+        if not has_exact_identity and not has_safe_fallback_identity:
+            raise ReferenceIdentityUnavailableError(
+                "TIDAL rate-limit failover stopped because the recording "
+                "identity is incomplete"
+            ) from error
         report = await comparator.compare(
-            track_identity(source, metadata), qualities, ceiling=ceiling
+            identity, qualities, ceiling=ceiling
         )
         report.errors["tidal"] = f"{type(error).__name__}: {error}"
         return report
@@ -1249,6 +1261,8 @@ async def library(
                 eligible_tracks(), compare_track, comparison_workers
             ):
                 if error is not None:
+                    if isinstance(error, ReferenceIdentityUnavailableError):
+                        raise click.ClickException(str(error)) from error
                     failed += 1
                     console.print(
                         f"[red]FAILED[/red] {track.artist} — {track.title}: "

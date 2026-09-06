@@ -72,3 +72,7 @@ class ConversionError(Exception):
 
 class TidalRateLimitError(Exception):
     """TIDAL throttled the current run enough to trip its safety breaker."""
+
+
+class ReferenceIdentityUnavailableError(Exception):
+    """Cross-service failover lacks enough trusted reference metadata."""

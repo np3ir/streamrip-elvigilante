@@ -5,7 +5,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from click.testing import CliRunner
 
-from streamrip.exceptions import TidalRateLimitError
+from streamrip.exceptions import (
+    ReferenceIdentityUnavailableError,
+    TidalRateLimitError,
+)
 from streamrip.rip.cli import (
     _compare_with_reference_failover,
     _get_logged_in_client_bounded,
@@ -153,3 +156,27 @@ async def test_tidal_rate_limit_uses_catalog_identity_and_continues_comparison()
     assert identity.isrc == "USABC1234567"
     assert comparator.compare.await_args.kwargs.get("reference_candidate") is None
     assert result.errors["tidal"].startswith("TidalRateLimitError:")
+
+
+@pytest.mark.asyncio
+async def test_tidal_rate_limit_stops_when_reference_identity_is_incomplete():
+    reference_client = SimpleNamespace(
+        get_downloadable=AsyncMock(
+            side_effect=TidalRateLimitError("breaker tripped")
+        )
+    )
+    comparator = SimpleNamespace(compare=AsyncMock())
+
+    with pytest.raises(ReferenceIdentityUnavailableError, match="identity is incomplete"):
+        await _compare_with_reference_failover(
+            source="tidal",
+            track_id="t1",
+            metadata={"id": "t1", "title": "", "artists": []},
+            reference_client=reference_client,
+            reference_quality=2,
+            comparator=comparator,
+            qualities={"tidal": 2, "deezer": 2, "qobuz": 2},
+            ceiling=object(),
+        )
+
+    comparator.compare.assert_not_awaited()

@@ -105,6 +105,9 @@ async def resolve_comparison_collection(
             ),
             return_exceptions=True,
         )
+        failures = [result for result in batch if isinstance(result, Exception)]
+        if failures:
+            raise failures[0]
         album_responses.extend(
             response for response in batch if isinstance(response, dict)
         )

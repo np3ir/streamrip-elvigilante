@@ -10,6 +10,7 @@ from streamrip.comparison import (
     search_items,
     service_quality_for_ceiling,
 )
+from streamrip.exceptions import TidalRateLimitError
 from streamrip.multisource import (
     AudioQuality,
     QualityCeiling,
@@ -181,6 +182,32 @@ async def test_resolves_artist_albums_and_deduplicates_tracks_in_order():
     assert collection.name == "Artist"
     assert collection.track_ids == ["t1", "t2", "t3"]
     assert set(collection.track_metadata) == {"t1", "t2", "t3"}
+
+
+@pytest.mark.asyncio
+async def test_artist_resolution_stops_if_any_album_metadata_is_unavailable():
+    failure = TidalRateLimitError("breaker tripped")
+    client = MetadataClient(
+        {
+            ("ar1", "artist"): {
+                "name": "Artist",
+                "albums": [{"id": "a1"}, {"id": "a2"}],
+            },
+            ("a1", "album"): {"tracks": [{"id": "t1"}]},
+            ("a2", "album"): failure,
+        }
+    )
+
+    async def get_metadata(item_id, media_type):
+        result = client.responses[(item_id, media_type)]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    client.get_metadata = get_metadata
+
+    with pytest.raises(TidalRateLimitError, match="breaker tripped"):
+        await resolve_comparison_collection(client, "artist", "ar1")
 
 
 @pytest.mark.asyncio
