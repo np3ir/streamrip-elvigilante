@@ -171,7 +171,10 @@ def rip(
         level="INFO",
         format="%(message)s",
         datefmt="[%X]",
-        handlers=[RichHandler()],
+        # Reuse the process-level console. Click's CliRunner replaces and then
+        # closes its temporary stdout; a handler-created Console can retain
+        # that closed stream across invocations and poison later Rich output.
+        handlers=[RichHandler(console=console)],
     )
     logger = logging.getLogger("streamrip")
     if verbose:

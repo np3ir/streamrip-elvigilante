@@ -1004,7 +1004,6 @@ description = "Pick an option in the terminal with a simple GUI"
 optional = false
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "sys_platform == \"win32\" or sys_platform == \"cygwin\""
 files = [
     {file = "pick-2.4.0-py3-none-any.whl", hash = "sha256:2b07be18d16d655c7f491e1ecca7a29de3be85e1e000c8d46193672f14faa203"},
     {file = "pick-2.4.0.tar.gz", hash = "sha256:71f1b1b5d83652f87652fea5f51a3ba0b3388a71718cdcf8c6bc1326f85ae0b9"},
@@ -1907,4 +1906,4 @@ ssl = ["certifi"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10 <4.0"
-content-hash = "05a3a5b0e808b6ce847348c43613dbd6ff769c473eb3a9454e97c197b2e27881"
+content-hash = "51afae9777ef2ec47460d787beabb3a95d1c7bbf48cd9b9e821e1ff62d098a72"
