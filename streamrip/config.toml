@@ -193,13 +193,14 @@ artist_separator = ", "
 # Create folders for single tracks within the downloads directory using the folder_format
 # template
 add_singles_to_folder = false
-# Available keys: "albumartist", "title", "year", "bit_depth", "sampling_rate",
-# "id", "albumcomposer", "artist_initials", "release_date", "release_type", "artist", and "album"
-folder_format = "{artist_initials}/{albumartist}/({release_date}) {title} ({release_type})"
-# Available keys: "tracknumber", "artist", "albumartist", "composer", "title",
-# "albumcomposer", "explicit"
-# Note: {explicit} expands to " (explicit)" (with leading space) or empty string
-track_format = "{tracknumber:02}. {artist} - {title}{explicit}"
+# Uses the tiddl namespace: album.id/title/artist/artists/date/explicit/master/release.
+# Legacy Streamrip aliases such as albumartist, title, year, and release_date
+# remain supported.
+folder_format = "{artist_initials}/{album.artist}/({album.date:%Y-%m-%d}) {album.title} ({album.release})"
+# Uses the tiddl namespace: item.id/title/title_version/number/volume/version,
+# artist/artists/features/artists_with_features/isrc/explicit/genre and dates.
+# Legacy aliases such as tracknumber, artist, title, and explicit remain supported.
+track_format = "{item.number:02}. {item.artists_with_features} - {item.title_version}{item.explicit:shortparens}"
 # Filename format for tracks inside a playlist folder. Has no track-number
 # prefix, matching tiddl's playlist layout ("!playlists/{title}/{artists} - {title}").
 playlist_track_format = "{item.artists_with_features} - {item.title_version} {item.explicit:shortparens}"

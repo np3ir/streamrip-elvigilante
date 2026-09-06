@@ -19,6 +19,53 @@ logger = logging.getLogger("streamrip")
 genre_clean = re.compile(r"([^→\/]+)")
 
 
+class _ConditionalTemplateValue:
+    """Render tiddl-style conditional format text when the value is true."""
+
+    def __init__(self, value: bool):
+        self.value = bool(value)
+
+    def __format__(self, spec: str) -> str:
+        return spec if self.value else ""
+
+
+class _ExplicitTemplateValue:
+    def __init__(self, value: bool):
+        self.value = bool(value)
+
+    def __format__(self, spec: str) -> str:
+        if not self.value:
+            return ""
+        if "shortparens" in spec:
+            return " (explicit)"
+        if "parens" in spec:
+            return " (Explicit)"
+        if "upper" in spec:
+            return "EXPLICIT" if "long" in spec else "E"
+        return "explicit" if "long" in spec else "E"
+
+    def __str__(self) -> str:
+        return " (explicit)" if self.value else ""
+
+
+@dataclass(slots=True)
+class AlbumTemplate:
+    id: str
+    title: str
+    safe_title: str
+    artist: str
+    safe_artist: str
+    artists: str
+    safe_artists: str
+    date: datetime
+    explicit: _ExplicitTemplateValue
+    master: _ConditionalTemplateValue
+    release: str
+
+    def __str__(self) -> str:
+        return self.title
+
+
 @dataclass(slots=True)
 class AlbumInfo:
     id: str
@@ -73,6 +120,30 @@ class AlbumMetadata:
         _copyright = re.sub(r"(?i)\(C\)", COPYRIGHT, _copyright)
         return _copyright
 
+    def template_data(self) -> AlbumTemplate:
+        artist = self.albumartist or "Unknown"
+        title = self.album or "Unknown"
+        return AlbumTemplate(
+            id=self.info.id,
+            title=title,
+            safe_title=clean_filename(title),
+            artist=artist,
+            safe_artist=clean_filename(artist),
+            artists=artist,
+            safe_artists=clean_filename(artist),
+            date=self._template_date(),
+            explicit=_ExplicitTemplateValue(self.info.explicit),
+            master=_ConditionalTemplateValue(self.info.quality >= 3),
+            release=self.release_type,
+        )
+
+    def _template_date(self) -> datetime:
+        raw = self.release_date or self.date or ""
+        try:
+            return datetime.strptime(str(raw)[:10], "%Y-%m-%d")
+        except (TypeError, ValueError):
+            return datetime.min
+
     def format_folder_path(self, formatter: str) -> str:
         none_str = "Unknown"
         # Date cleanup for folders (no shifting)
@@ -88,7 +159,7 @@ class AlbumMetadata:
         artist_clean = clean_filename(self.albumartist)
         album_clean = clean_filename(self.album)
 
-        info: dict[str, str | int | float] = {
+        info: dict[str, object] = {
             # New variable requested in config
             "artist_initials": initials_clean,
 
@@ -106,7 +177,11 @@ class AlbumMetadata:
 
             # Extra aliases for easier config
             "artist": artist_clean,
-            "album": album_clean,
+            # Full tiddl template namespace. Legacy flat aliases above remain
+            # supported so existing Streamrip configurations do not break.
+            "album": self.template_data(),
+            "quality": str(self.info.quality),
+            "now": datetime.now(),
         }
         return clean_filepath(formatter.format(**info))
 

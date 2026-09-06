@@ -146,8 +146,4 @@ class PendingAlbum(Pending):
             meta.format_folder_path(formatter),
             config.filepaths.restrict_characters,
         )
-        # Truncate folder name to leave room for parent path and filename
-        if len(folder) > 150:
-            folder = folder[:150].rstrip()
-
         return os.path.join(parent, folder)

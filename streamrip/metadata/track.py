@@ -4,6 +4,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
 from ..filepath_utils import clean_filename, clean_track_title, truncate_filepath_to_max
@@ -68,9 +69,11 @@ class _ItemProxy:
         "isrc",
         "number",
         "quality",
+        "releaseDate",
         "safe_artist",
         "safe_artists",
         "safe_title",
+        "streamStartDate",
         "title",
         "title_version",
         "version",
@@ -106,8 +109,11 @@ class _ItemProxy:
         self.version     = ver
         # title_version = "Title (Version)" when version exists, else just title.
         self.title_version = f"{clean_title} ({ver})" if ver else clean_title
-        self.artist      = all_artists
-        self.safe_artist = clean_filename(all_artists)
+        # tiddl's singular item.artist is the primary artist; the legacy flat
+        # {artist} alias below intentionally remains the complete credit.
+        primary_artist = main_only.split(sep, 1)[0] if main_only else all_artists
+        self.artist      = primary_artist
+        self.safe_artist = clean_filename(primary_artist)
         # {item.artists} = MAIN artists only (matching tiddl)
         self.artists     = main_only
         self.safe_artists = clean_filename(main_only)
@@ -119,6 +125,12 @@ class _ItemProxy:
         self.copyright   = ""
         self.bpm         = 0
         self.quality     = ""
+        try:
+            release_date = datetime.strptime(meta.album.release_date[:10], "%Y-%m-%d")
+        except (AttributeError, TypeError, ValueError):
+            release_date = datetime.min
+        self.releaseDate = release_date
+        self.streamStartDate = release_date
         self.explicit    = _Explicit(meta.info.explicit)
         # {item.genre} — from album metadata when available
         try:
@@ -167,6 +179,9 @@ class TrackMetadata:
             "tracknumber": self.tracknumber,
             "explicit": " (explicit)" if self.info.explicit else "",
             "item": _ItemProxy(self),
+            "album": self.album.template_data(),
+            "quality": str(self.info.quality),
+            "now": datetime.now(),
         }
 
         # Use imported clean_filename (respects accents, swaps : for ：)
