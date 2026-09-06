@@ -167,6 +167,7 @@ class Main:
         audio_id: str,
         audio_client: Client,
         audio_quality: int,
+        reference_metadata: dict | None = None,
         completion_callback: Callable[[str], None] | None = None,
         failure_callback: Callable[[str], None] | None = None,
     ):
@@ -176,15 +177,16 @@ class Main:
 
         await self.queue.put(
             PendingLibraryTrack(
-                reference_id,
-                reference_client,
-                audio_id,
-                audio_client,
-                audio_quality,
-                self.config,
-                self.database,
-                completion_callback,
-                failure_callback,
+                reference_id=reference_id,
+                reference_client=reference_client,
+                audio_id=audio_id,
+                audio_client=audio_client,
+                audio_quality=audio_quality,
+                config=self.config,
+                db=self.database,
+                reference_metadata=reference_metadata,
+                completion_callback=completion_callback,
+                failure_callback=failure_callback,
             )
         )
 

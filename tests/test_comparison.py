@@ -142,6 +142,7 @@ async def test_resolves_album_tracks_without_downloading():
 
     assert collection.name == "Album"
     assert collection.track_ids == ["1", "2"]
+    assert collection.track_metadata == {"1": {"id": 1}, "2": {"id": 2}}
     assert client.calls == [("a1", "album")]
 
 
@@ -159,6 +160,7 @@ async def test_resolves_playlist_track_container():
     collection = await resolve_comparison_collection(client, "playlist", "p1")
 
     assert collection.track_ids == ["t1", "t2"]
+    assert collection.track_metadata["t2"] == {"id": "t2"}
 
 
 @pytest.mark.asyncio
@@ -178,6 +180,7 @@ async def test_resolves_artist_albums_and_deduplicates_tracks_in_order():
 
     assert collection.name == "Artist"
     assert collection.track_ids == ["t1", "t2", "t3"]
+    assert set(collection.track_metadata) == {"t1", "t2", "t3"}
 
 
 @pytest.mark.asyncio

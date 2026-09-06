@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from streamrip.config import Config
+from streamrip.exceptions import TidalRateLimitError
 from streamrip.file_publish import PublishError
 from streamrip.library import (
     LibraryCheckpoint,
@@ -200,6 +201,50 @@ async def test_pending_library_track_combines_reference_metadata_with_winner_aud
     assert resolved.folder == os.path.normpath(resolved.folder)
     build_metadata.assert_called_once_with(album, "tidal", {"id": "t1"}, ", ")
     winner.get_downloadable.assert_awaited_once_with("d1", 2)
+
+
+@pytest.mark.asyncio
+async def test_pending_library_track_reuses_metadata_after_tidal_breaker(tmp_path):
+    config = Config("tests/test_config.toml")
+    config.session.downloads.folder = str(tmp_path)
+    config.session.downloads.source_subdirectories = False
+    config.session.downloads.disc_subdirectories = False
+    cached = {"id": "t1", "title": "Cached"}
+    reference = Mock(source="tidal", session=Mock())
+    reference.get_metadata = AsyncMock(
+        side_effect=TidalRateLimitError("breaker tripped")
+    )
+    winner = Mock(source="deezer")
+    winner.get_downloadable = AsyncMock(return_value=Mock(extension="flac"))
+    album = Mock(disctotal=1, covers=Mock())
+    album.format_folder_path.return_value = "Artist/Album"
+    metadata = Mock(discnumber=1)
+    pending = PendingLibraryTrack(
+        "t1", reference, "d1", winner, 2, config, Mock(),
+        reference_metadata=cached,
+    )
+
+    with (
+        patch.object(
+            PendingLibraryTrack,
+            "_canonical_album",
+            new=AsyncMock(return_value=album),
+        ),
+        patch(
+            "streamrip.library.TrackMetadata.from_resp",
+            return_value=metadata,
+        ) as build_metadata,
+        patch(
+            "streamrip.library.download_artwork",
+            new=AsyncMock(return_value=(None, None)),
+        ),
+        patch("streamrip.library.fetch_lrc", new=AsyncMock(return_value=None)),
+    ):
+        resolved = await pending.resolve()
+
+    assert resolved.meta is metadata
+    build_metadata.assert_called_once_with(album, "tidal", cached, ", ")
+    reference.get_metadata.assert_awaited_once_with("t1", "track")
 
 
 @pytest.mark.asyncio

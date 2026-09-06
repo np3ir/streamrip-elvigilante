@@ -19,6 +19,7 @@ from .client.candidate import track_identity
 from .config import Config
 from .db import Database
 from .destination_identity import guard_configured_write
+from .exceptions import TidalRateLimitError
 from .filepath_utils import clean_filepath
 from .media.artwork import download_artwork
 from .media.lyrics import fetch_lrc
@@ -65,12 +66,20 @@ class PendingLibraryTrack(Pending):
     audio_quality: int
     config: Config
     db: Database
+    reference_metadata: dict | None = field(default=None, repr=False)
     completion_callback: Callable[[str], None] | None = None
     failure_callback: Callable[[str], None] | None = None
 
     async def resolve(self) -> Track | None:
         reference_source = self.reference_client.source
-        response = await self.reference_client.get_metadata(self.reference_id, "track")
+        try:
+            response = await self.reference_client.get_metadata(
+                self.reference_id, "track"
+            )
+        except TidalRateLimitError:
+            if reference_source != "tidal" or not self.reference_metadata:
+                raise
+            response = self.reference_metadata
         separator = self.config.session.metadata.artist_separator
         album = await self._canonical_album(response, separator)
         metadata = TrackMetadata.from_resp(album, reference_source, response, separator)

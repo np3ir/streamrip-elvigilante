@@ -20,6 +20,7 @@ from rich.traceback import install
 from .. import __version__, db
 from ..config import DEFAULT_CONFIG_PATH, Config, OutdatedConfigError, set_user_defaults
 from ..console import console
+from ..exceptions import TidalRateLimitError
 from ..utils.ssl_utils import get_aiohttp_connector_kwargs
 from .main import Main
 
@@ -55,6 +56,36 @@ async def _get_logged_in_client_bounded(
     return await asyncio.wait_for(
         main.get_logged_in_client(source, prompt_on_missing=prompt_on_missing),
         timeout=timeout,
+    )
+
+
+async def _compare_with_reference_failover(
+    *, source, track_id, metadata, reference_client, reference_quality,
+    comparator, qualities, ceiling,
+):
+    """Continue on other services when TIDAL's run-wide breaker trips."""
+
+    from ..client.candidate import service_candidate, track_identity
+
+    try:
+        downloadable = await reference_client.get_downloadable(
+            track_id, reference_quality
+        )
+    except TidalRateLimitError as error:
+        if source != "tidal":
+            raise
+        report = await comparator.compare(
+            track_identity(source, metadata), qualities, ceiling=ceiling
+        )
+        report.errors["tidal"] = f"{type(error).__name__}: {error}"
+        return report
+
+    reference = service_candidate(source, metadata, downloadable)
+    return await comparator.compare(
+        reference.identity,
+        qualities,
+        reference_candidate=reference,
+        ceiling=ceiling,
     )
 
 
@@ -906,21 +937,26 @@ async def compare_sources(
             winners: dict[str, int] = {}
             selected_tracks = []
             for position, track_id in enumerate(collection.track_ids, start=1):
-                reference_candidate = await reference_client.get_candidate(
-                    track_id, reference_quality
-                )
-                report = await comparator.compare(
-                    reference_candidate.identity,
-                    qualities,
-                    reference_candidate=reference_candidate,
+                reference_metadata = collection.track_metadata.get(track_id)
+                if reference_metadata is None:
+                    reference_metadata = await reference_client.get_metadata(
+                        track_id, "track"
+                    )
+                report = await _compare_with_reference_failover(
+                    source=source,
+                    track_id=track_id,
+                    metadata=reference_metadata,
+                    reference_client=reference_client,
+                    reference_quality=reference_quality,
+                    comparator=comparator,
+                    qualities=qualities,
                     ceiling=ceiling,
                 )
                 report.errors.update(login_errors)
                 if media_type != "track":
                     console.print(
                         f"\n[bold]Track {position}/{len(collection.track_ids)}:[/bold] "
-                        f"{reference_candidate.identity.artist} — "
-                        f"{reference_candidate.identity.title}"
+                        f"{report.reference.artist} — {report.reference.title}"
                     )
                 _print_comparison_report(report, format_quality, match_tracks)
                 if report.selected is not None:
@@ -1069,7 +1105,6 @@ async def library(
 ):
     """Build a resumable best-quality library plan from a service URL."""
 
-    from ..client.candidate import service_candidate
     from ..comparison import MultiSourceComparator, service_quality_for_ceiling
     from ..library import (
         LibraryCheckpoint,
@@ -1196,18 +1231,14 @@ async def library(
             async def compare_track(item):
                 track, key = item
                 try:
-                    reference_downloadable = await reference_client.get_downloadable(
-                        track.source_id, reference_quality
-                    )
-                    reference = service_candidate(
-                        source,
-                        track.reference_metadata,
-                        reference_downloadable,
-                    )
-                    report = await comparator.compare(
-                        reference.identity,
-                        qualities,
-                        reference_candidate=reference,
+                    report = await _compare_with_reference_failover(
+                        source=source,
+                        track_id=track.source_id,
+                        metadata=track.reference_metadata,
+                        reference_client=reference_client,
+                        reference_quality=reference_quality,
+                        comparator=comparator,
+                        qualities=qualities,
                         ceiling=ceiling,
                     )
                 except Exception as error:
@@ -1360,6 +1391,7 @@ async def library(
                         audio_id=selected.identity.source_id,
                         audio_client=clients[winner],
                         audio_quality=qualities[winner],
+                        reference_metadata=track.reference_metadata,
                         completion_callback=mark_completed,
                         failure_callback=mark_download_failed,
                     )

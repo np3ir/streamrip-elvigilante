@@ -42,6 +42,7 @@ class ComparisonCollection:
     name: str
     track_ids: list[str]
     media_type: str
+    track_metadata: dict[str, dict] = field(default_factory=dict)
 
 
 def _track_ids(source: str, response: dict) -> list[str]:
@@ -51,6 +52,17 @@ def _track_ids(source: str, response: dict) -> list[str]:
     if isinstance(tracks, dict):
         tracks = tracks.get("items") or tracks.get("data") or []
     return [str(item["id"]) for item in tracks if item.get("id") is not None]
+
+
+def _track_metadata(response: dict) -> dict[str, dict]:
+    tracks = response.get("tracks") or []
+    if isinstance(tracks, dict):
+        tracks = tracks.get("items") or tracks.get("data") or []
+    return {
+        str(item["id"]): item
+        for item in tracks
+        if isinstance(item, dict) and item.get("id") is not None
+    }
 
 
 def _collection_name(response: dict, fallback: str) -> str:
@@ -73,6 +85,7 @@ async def resolve_comparison_collection(
             _collection_name(response, f"{media_type.title()} {item_id}"),
             _track_ids(client.source, response),
             media_type,
+            _track_metadata(response),
         )
 
     if media_type != "artist":
@@ -96,13 +109,15 @@ async def resolve_comparison_collection(
             response for response in batch if isinstance(response, dict)
         )
     ordered: list[str] = []
+    metadata: dict[str, dict] = {}
     seen: set[str] = set()
     for album in album_responses:
+        metadata.update(_track_metadata(album))
         for track_id in _track_ids(client.source, album):
             if track_id not in seen:
                 seen.add(track_id)
                 ordered.append(track_id)
-    return ComparisonCollection(artist.name, ordered, media_type)
+    return ComparisonCollection(artist.name, ordered, media_type, metadata)
 
 
 def search_items(source: str, pages: list[dict]) -> list[dict]:
