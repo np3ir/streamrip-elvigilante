@@ -2,15 +2,23 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass
+from typing import Callable
 
 import aiohttp
 
 from .. import converter
+from ..audio_container import normalize_tidal_container
 from ..client import Client, Downloadable
 from ..config import Config
 from ..console import console
 from ..db import Database
+from ..destination_identity import (
+    DestinationIdentityError,
+    configured_root,
+    guard_configured_write,
+)
 from ..exceptions import NonStreamableError
+from ..file_publish import PublishError
 
 # --- IMPORTAMOS LA NUEVA FUNCIÓN ---
 from ..filepath_utils import clean_filename, clean_track_title, truncate_filepath_to_max
@@ -37,6 +45,13 @@ class Track(Media):
     is_single: bool = False
     from_playlist: bool = False
     lrc_content: str | None = None
+    completion_callback: Callable[[str], None] | None = None
+    failure_callback: Callable[[str], None] | None = None
+    failure_id: str | None = None
+
+    def _mark_complete(self):
+        if self.completion_callback is not None:
+            self.completion_callback(self.download_path)
 
     async def rip(self):
         await self.preprocess()
@@ -48,6 +63,7 @@ class Track(Media):
             if not self.db.downloaded(self.meta.info.id):
                 self.db.set_downloaded(self.meta.info.id)
             self.db.set_isrc_downloaded(self.meta.isrc)
+            self._mark_complete()
             if self.is_single: remove_title(self.meta.title)
             return
 
@@ -56,6 +72,7 @@ class Track(Media):
         isrc = self.meta.isrc
         if isrc and self.db.isrc_downloaded(isrc):
             console.print(f"[yellow]Skipped (ISRC, other source)[/]: {self.meta.title}")
+            self._mark_complete()
             if self.is_single: remove_title(self.meta.title)
             return
 
@@ -71,10 +88,16 @@ class Track(Media):
                 self.config.session.downloads.max_retries,
             )
             return
+        if self.downloadable.source == "tidal":
+            self.download_path = await normalize_tidal_container(
+                self.download_path, self.downloadable
+            )
         await self.postprocess()
+        self._mark_complete()
 
     async def preprocess(self):
         self._set_download_path()
+        guard_configured_write(self.config, self.download_path)
         os.makedirs(self.folder, exist_ok=True)
         if self.is_single: add_title(self.meta.title)
 
@@ -95,15 +118,49 @@ class Track(Media):
             display_title = self.meta.title
             for attempt in range(1, max_retries + 2):
                 try:
+                    anchor = guard_configured_write(self.config, self.download_path)
+                    destination_root = (
+                        os.fspath(configured_root(self.config, self.download_path))
+                        if anchor is not None
+                        else None
+                    )
                     size = await self.downloadable.size()
                     desc = display_title if attempt == 1 else f"{display_title} (retry {attempt - 1})"
                     handle = get_progress_callback(self.config.session.cli.progress_bars, size, desc)
                     with handle as update_fn:
-                        await self.downloadable.download(self.download_path, update_fn)
+                        if anchor is None:
+                            await self.downloadable.download(self.download_path, update_fn)
+                        else:
+                            await self.downloadable.download(
+                                self.download_path,
+                                update_fn,
+                                destination_root=destination_root,
+                                destination_anchor_id=anchor.anchor_id,
+                            )
                     return
                 except asyncio.CancelledError:
                     # Propagate cancellations so higher-level logic can abort cleanly
                     raise
+                except DestinationIdentityError as error:
+                    logger.error("Destination write refused: %s", error)
+                    self.db.set_failed(
+                        self.downloadable.source,
+                        "track",
+                        self.failure_id or self.meta.info.id,
+                    )
+                    if self.failure_callback is not None:
+                        self.failure_callback(self.download_path)
+                    return
+                except PublishError as error:
+                    logger.error("Verified media could not be published: %s", error)
+                    self.db.set_failed(
+                        self.downloadable.source,
+                        "track",
+                        self.failure_id or self.meta.info.id,
+                    )
+                    if self.failure_callback is not None:
+                        self.failure_callback(self.download_path)
+                    return
                 except (aiohttp.ClientError, OSError, asyncio.TimeoutError) as e:
                     if attempt <= max_retries:
                         wait = min(max_wait, retry_delay * (2 ** (attempt - 1)))
@@ -117,15 +174,23 @@ class Track(Media):
                             "Persistent error downloading '%s' after %d retries.",
                             display_title, max_retries,
                         )
-                        self.db.set_failed(self.downloadable.source, "track", self.meta.info.id)
+                        self.db.set_failed(
+                            self.downloadable.source,
+                            "track",
+                            self.failure_id or self.meta.info.id,
+                        )
+                        if self.failure_callback is not None:
+                            self.failure_callback(self.download_path)
 
     async def postprocess(self):
         if self.is_single: remove_title(self.meta.title)
+        guard_configured_write(self.config, self.download_path)
         await tag_file(self.download_path, self.meta, self.cover_path)
         if self.config.session.conversion.enabled: await self._convert()
         # Save .lrc sidecar file when lyrics were fetched
         if self.lrc_content:
             lrc_path = os.path.splitext(self.download_path)[0] + ".lrc"
+            guard_configured_write(self.config, lrc_path)
             try:
                 with open(lrc_path, "w", encoding="utf-8") as lrc_file:
                     lrc_file.write(self.lrc_content)
@@ -245,7 +310,7 @@ class PendingSingle(Pending):
         except NonStreamableError: return None
         sep = self.config.session.metadata.artist_separator
         try:
-            album = AlbumMetadata.from_track_resp(resp, self.client.source, sep)
+            album = await self._album_metadata(resp, sep)
             meta = TrackMetadata.from_resp(album, self.client.source, resp, sep)
         except Exception as e:
             logger.error("Error parsing single metadata id=%s source=%s: %s", self.id, self.client.source, e)
@@ -279,11 +344,31 @@ class PendingSingle(Pending):
             return None
         else:
             if self.db.downloaded(self.id): logger.warning(f"[!] Re-downloading: {os.path.basename(file_path)}")
+            guard_configured_write(self.config, file_path)
             os.makedirs(folder, exist_ok=True)
             embedded_cover_path = await self._download_cover(album.covers, folder)
 
             lrc_content = await fetch_lrc(self.client, self.id, self.config)
             return Track(meta, downloadable, self.config, folder, embedded_cover_path, self.db, is_single=True, lrc_content=lrc_content)
+
+    async def _album_metadata(self, track_response: dict, artist_separator: str):
+        """Resolve full TIDAL album data so singles get authoritative dates."""
+
+        if self.client.source == "tidal":
+            album_id = (track_response.get("album") or {}).get("id")
+            if album_id:
+                try:
+                    album_response = await self.client.get_metadata(str(album_id), "album")
+                    return AlbumMetadata.from_tidal(album_response)
+                except Exception as error:
+                    logger.debug(
+                        "Could not resolve full TIDAL album %s: %s",
+                        album_id,
+                        error,
+                    )
+        return AlbumMetadata.from_track_resp(
+            track_response, self.client.source, artist_separator
+        )
 
     def _format_folder(self, meta: AlbumMetadata) -> str:
         c = self.config.session

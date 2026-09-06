@@ -12,6 +12,7 @@ import tempfile
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 import aiofiles
@@ -22,6 +23,7 @@ from Cryptodome.Util import Counter
 
 from .. import converter
 from ..exceptions import NonStreamableError
+from ..file_publish import PublishError, publish_verified_file, register_recovery
 
 logger = logging.getLogger("streamrip")
 
@@ -87,8 +89,94 @@ class Downloadable(ABC):
     source: str = "Unknown"
     _size_base: Optional[int] = None
 
-    async def download(self, path: str, callback: Callable[[int], Any]):
-        await self._download(path, callback)
+    async def download(
+        self,
+        path: str,
+        callback: Callable[[int], Any],
+        *,
+        destination_root: str | None = None,
+        destination_anchor_id: str | None = None,
+    ):
+        suffix = f".{self.extension}" if self.extension else ".media"
+        descriptor, stage = tempfile.mkstemp(prefix="streamrip-stage-", suffix=suffix)
+        os.close(descriptor)
+        try:
+            await self._download(stage, callback)
+            if not os.path.isfile(stage) or os.path.getsize(stage) <= 0:
+                raise NonStreamableError("Downloaded staging file is missing or empty")
+            self._validate_stage(stage)
+            if destination_root is not None:
+                from ..destination_identity import (
+                    DestinationIdentityError,
+                    check_destination,
+                )
+
+                try:
+                    check_destination(
+                        destination_root,
+                        path,
+                        expected_anchor_id=destination_anchor_id,
+                    )
+                except DestinationIdentityError as identity_error:
+                    raise PublishError(
+                        f"destination identity verification failed: {identity_error}",
+                        Path(stage),
+                    ) from identity_error
+            await publish_verified_file(stage, path)
+        except PublishError as error:
+            # A valid stage is intentionally retained for manual recovery.
+            try:
+                entry = await asyncio.to_thread(
+                    register_recovery,
+                    error.retained_path,
+                    path,
+                    destination_root=destination_root,
+                    destination_anchor_id=destination_anchor_id,
+                )
+                error.recovery_id = entry.id
+            except OSError as registry_error:
+                # Keep the publication failure truthful even if its recovery
+                # metadata cannot be persisted. The retained path stays visible.
+                error.recovery_error = str(registry_error)
+            raise
+        except Exception:
+            # Invalid/incomplete downloads are disposable.
+            for incomplete in (stage, stage + ".part"):
+                try:
+                    os.remove(incomplete)
+                except FileNotFoundError:
+                    pass
+            raise
+
+    def _validate_stage(self, path: str) -> None:
+        """Validate provider-specific invariants before final publication."""
+
+        max_bit_depth = getattr(self, "max_bit_depth", None)
+        max_sample_rate_hz = getattr(self, "max_sample_rate_hz", None)
+        if (
+            self.extension != "flac"
+            or (max_bit_depth is None and max_sample_rate_hz is None)
+        ):
+            return
+        from .audio_probe import parse_flac_streaminfo
+
+        with open(path, "rb") as audio:
+            measured = parse_flac_streaminfo(audio.read(64 * 1024))
+        if measured is None:
+            raise NonStreamableError(
+                f"Downloaded {self.source} FLAC could not be verified before publication"
+            )
+        bit_depth, sample_rate_hz, _channels = measured
+        if max_bit_depth is not None and bit_depth > max_bit_depth:
+            raise NonStreamableError(
+                f"Downloaded {self.source} FLAC is {bit_depth}-bit, above the "
+                f"{max_bit_depth}-bit limit"
+            )
+        if max_sample_rate_hz is not None and sample_rate_hz > max_sample_rate_hz:
+            raise NonStreamableError(
+                f"Downloaded {self.source} FLAC is {sample_rate_hz} Hz, above the "
+                f"{max_sample_rate_hz} Hz limit"
+            )
 
     async def size(self) -> int:
         if hasattr(self, "_size") and self._size is not None:
@@ -122,12 +210,18 @@ class BasicDownloadable(Downloadable):
         url: str,
         extension: str,
         source: str | None = None,
+        quality=None,
+        max_bit_depth: int | None = None,
+        max_sample_rate_hz: int | None = None,
     ):
         self.session = session
         self.url = url
         self.extension = extension
         self._size = None
         self.source: str = source or "Unknown"
+        self.quality = quality
+        self.max_bit_depth = max_bit_depth
+        self.max_sample_rate_hz = max_sample_rate_hz
 
     async def _download(self, path: str, callback):
         await fast_async_download(path, self.url, self.session.headers, callback, session=self.session)
@@ -159,6 +253,26 @@ class DeezerDownloadable(Downloadable):
             self.extension = "mp3"
         else:
             self.extension = "flac"
+        from ..multisource import AudioQuality
+
+        self.audio_quality = (
+            AudioQuality(
+                codec="flac",
+                lossless=True,
+                bit_depth=16,
+                sample_rate_hz=44100,
+                channels=2,
+            )
+            if self.quality == 2
+            else AudioQuality(
+                codec="mp3",
+                lossless=False,
+                bitrate_kbps=320 if self.quality == 1 else 128,
+                channels=2,
+            )
+        )
+        self.max_bit_depth = 16 if self.quality == 2 else None
+        self.max_sample_rate_hz = 44100 if self.quality == 2 else None
         self.id = str(info["id"])
 
     async def _download(self, path: str, callback):
@@ -300,16 +414,25 @@ class TidalDownloadable(Downloadable):
         codec: str,
         encryption_key: str | None,
         restrictions,
+        *,
+        urls: tuple[str, ...] | None = None,
+        quality=None,
+        max_bit_depth: int | None = None,
+        max_sample_rate_hz: int | None = None,
     ):
         self.session = session
         self.source = "tidal"
+        self.quality = quality
+        self.max_bit_depth = max_bit_depth
+        self.max_sample_rate_hz = max_sample_rate_hz
         codec = codec.lower()
         if codec in ("flac", "mqa"):
             self.extension = "flac"
         else:
             self.extension = "m4a"
 
-        if url is None:
+        self.urls = urls or ((url,) if url else ())
+        if not self.urls:
             # Turn CamelCase code into a readable sentence
             if restrictions:
                 words = re.findall(r"([A-Z][a-z]+)", restrictions[0]["code"])
@@ -319,16 +442,50 @@ class TidalDownloadable(Downloadable):
             raise NonStreamableError(
                 f"Tidal download: dl_info = {url, codec, encryption_key}"
             )
-        self.url = url
+        self.url = self.urls[0]
         self.enc_key = encryption_key
-        self.downloadable = BasicDownloadable(session, url, self.extension, "tidal")
+        self.downloadable = BasicDownloadable(session, self.url, self.extension, "tidal")
 
     async def _download(self, path: str, callback):
-        await self.downloadable._download(path, callback)
+        if len(self.urls) == 1:
+            await self.downloadable._download(path, callback)
+        else:
+            await self._download_segments(path, callback)
         if self.enc_key is not None:
             dec_bytes = await self._decrypt_mqa_file(path, self.enc_key)
             async with aiofiles.open(path, "wb") as audio:
                 await audio.write(dec_bytes)
+
+    async def _download_segments(self, path: str, callback, batch_size: int = 8):
+        """Download ordered DASH segments with bounded memory and atomic output."""
+
+        part_path = path + ".part"
+        try:
+            async with aiofiles.open(part_path, "wb") as output:
+                for start in range(0, len(self.urls), batch_size):
+                    batch = self.urls[start : start + batch_size]
+
+                    async def fetch(url: str) -> bytes:
+                        async with self.session.get(
+                            url,
+                            timeout=aiohttp.ClientTimeout(
+                                total=None, sock_connect=30, sock_read=120
+                            ),
+                        ) as response:
+                            response.raise_for_status()
+                            return await response.read()
+
+                    chunks = await asyncio.gather(*(fetch(url) for url in batch))
+                    for chunk in chunks:
+                        await output.write(chunk)
+                        callback(len(chunk))
+            os.replace(part_path, path)
+        except Exception:
+            try:
+                os.remove(part_path)
+            except FileNotFoundError:
+                pass
+            raise
 
     @property
     def _size(self):

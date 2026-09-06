@@ -1,16 +1,19 @@
 import asyncio
+import json
 import logging
 import os
 import platform
 import re
 import sys
+from typing import Callable
 
-import tomllib  # Native in Python 3.11+
+import aiofiles
 
 from .. import db
 from ..client import Client, DeezerClient, QobuzClient, SoundcloudClient, TidalClient
 from ..config import Config
-from ..console import console
+from ..console import console, console_status
+from ..exceptions import AuthenticationError, MissingCredentialsError
 from ..media import (
     PendingAlbum,
     PendingArtist,
@@ -19,6 +22,7 @@ from ..media import (
     PendingSingle,
     remove_artwork_tempdirs,
 )
+from ..metadata import SearchResults
 from ..progress import clear_progress
 from .parse_url import parse_url
 from .prompter import get_prompter
@@ -32,46 +36,14 @@ if platform.system() == "Windows":
 class Main:
     def __init__(self, config: Config):
         self.config = config
-
-        # --- BRUTE FORCE: LOAD CONFIG.TOML FROM APPDATA ---
-        try:
-            appdata = os.environ.get("APPDATA")
-            manual_config_path = os.path.join(appdata, "streamrip", "config.toml")
-
-            # Default values in case reading fails
-            target_folder = config.session.downloads.folder
-            db_path = os.path.join(target_folder, "downloads.db")
-            failed_db_path = os.path.join(target_folder, "failed_downloads.db")
-
-            if os.path.exists(manual_config_path):
-                with open(manual_config_path, "rb") as f:
-                    data = tomllib.load(f)
-
-                # 1. Force Download Folder
-                if "downloads" in data and "folder" in data["downloads"]:
-                    target_folder = data["downloads"]["folder"]
-                    self.config.session.downloads.folder = target_folder
-
-                # 2. Force Folder Format
-                if "filepaths" in data:
-                    if "folder_format" in data["filepaths"]:
-                        self.config.session.filepaths.folder_format = data["filepaths"]["folder_format"]
-                    if "track_format" in data["filepaths"]:
-                        self.config.session.filepaths.track_format = data["filepaths"]["track_format"]
-
-                # 3. Read Database Paths
-                if "database" in data:
-                    if "downloads_path" in data["database"]:
-                        db_path = data["database"]["downloads_path"]
-                    if "failed_downloads_path" in data["database"]:
-                        failed_db_path = data["database"]["failed_downloads_path"]
-            else:
-                os.makedirs(target_folder, exist_ok=True)
-
-        except Exception:
-            target_folder = config.session.downloads.folder
-            db_path = os.path.join(target_folder, "downloads.db")
-            failed_db_path = os.path.join(target_folder, "failed_downloads.db")
+        target_folder = config.session.downloads.folder
+        database_config = config.session.database
+        db_path = database_config.downloads_path or os.path.join(
+            target_folder, "downloads.db"
+        )
+        failed_db_path = database_config.failed_downloads_path or os.path.join(
+            target_folder, "failed_downloads.db"
+        )
 
         # Initialize Clients
         self.clients: dict[str, Client] = {
@@ -82,15 +54,26 @@ class Main:
         }
 
         # Initialize Database with correct paths
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        os.makedirs(os.path.dirname(failed_db_path), exist_ok=True)
-
-        downloads_db = db.Downloads(db_path)
-        failed_downloads_db = db.Failed(failed_db_path)
+        if database_config.downloads_enabled:
+            os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+            downloads_db = db.Downloads(db_path)
+        else:
+            downloads_db = db.Dummy()
+        if database_config.failed_downloads_enabled:
+            os.makedirs(os.path.dirname(os.path.abspath(failed_db_path)), exist_ok=True)
+            failed_downloads_db = db.Failed(failed_db_path)
+        else:
+            failed_downloads_db = db.Dummy()
 
         # ISRC cross-source deduplication DB — same folder as downloads DB.
-        isrc_db_path = os.path.join(os.path.dirname(db_path), "isrc_downloaded.db")
-        isrc_db = db.DownloadedISRCs(isrc_db_path) if config.session.database.isrc_enabled else db.Dummy()
+        isrc_db_path = os.path.join(
+            os.path.dirname(os.path.abspath(db_path)), "isrc_downloaded.db"
+        )
+        isrc_db = (
+            db.DownloadedISRCs(isrc_db_path)
+            if database_config.isrc_enabled is True
+            else db.Dummy()
+        )
 
         self.database = db.Database(downloads_db, failed_downloads_db, isrc_db)
         # -----------------------------------------------------------
@@ -164,16 +147,60 @@ class Main:
 
     async def add_by_id(self, source: str, media_type: str, id: str):
         client = await self.get_logged_in_client(source)
+        await self._queue_by_id(client, media_type, id)
+
+    async def add_all_by_id(self, info: list[tuple[str, str, str]]):
+        """Queue IDs while logging in to each source at most once."""
+
+        clients = {
+            source: await self.get_logged_in_client(source)
+            for source in dict.fromkeys(source for source, _, _ in info)
+        }
+        for source, media_type, item_id in info:
+            await self._queue_by_id(clients[source], media_type, item_id)
+
+    async def add_library_track(
+        self,
+        *,
+        reference_id: str,
+        reference_client: Client,
+        audio_id: str,
+        audio_client: Client,
+        audio_quality: int,
+        reference_metadata: dict | None = None,
+        completion_callback: Callable[[str], None] | None = None,
+        failure_callback: Callable[[str], None] | None = None,
+    ):
+        """Queue winner audio while retaining reference-service metadata."""
+
+        from ..library import PendingLibraryTrack
+
+        await self.queue.put(
+            PendingLibraryTrack(
+                reference_id=reference_id,
+                reference_client=reference_client,
+                audio_id=audio_id,
+                audio_client=audio_client,
+                audio_quality=audio_quality,
+                config=self.config,
+                db=self.database,
+                reference_metadata=reference_metadata,
+                completion_callback=completion_callback,
+                failure_callback=failure_callback,
+            )
+        )
+
+    async def _queue_by_id(self, client: Client, media_type: str, item_id: str):
         if media_type == "track":
-            item = PendingSingle(id, client, self.config, self.database)
+            item = PendingSingle(item_id, client, self.config, self.database)
         elif media_type == "album":
-            item = PendingAlbum(id, client, self.config, self.database)
+            item = PendingAlbum(item_id, client, self.config, self.database)
         elif media_type == "playlist":
-            item = PendingPlaylist(id, client, self.config, self.database)
+            item = PendingPlaylist(item_id, client, self.config, self.database)
         elif media_type == "label":
-            item = PendingLabel(id, client, self.config, self.database)
+            item = PendingLabel(item_id, client, self.config, self.database)
         elif media_type == "artist":
-            item = PendingArtist(id, client, self.config, self.database)
+            item = PendingArtist(item_id, client, self.config, self.database)
         else:
             raise Exception(media_type)
         await self.queue.put(item)
@@ -204,6 +231,104 @@ class Main:
 
         clear_progress()
 
+    async def search_interactive(self, source: str, media_type: str, query: str):
+        """Search and queue the items explicitly selected in a terminal menu."""
+
+        client = await self.get_logged_in_client(source)
+        limit = self.config.session.cli.max_search_results
+        with console_status(f"[bold]Searching {source}", spinner="dots"):
+            pages = await client.search(media_type, query, limit=limit)
+            if not pages:
+                console.print(f"[red]No search results found for query {query}")
+                return
+            results = SearchResults.from_pages(source, media_type, pages)
+
+        if not results.results:
+            console.print(f"[red]No search results found for query {query}")
+            return
+
+        if platform.system() == "Windows":
+            from pick import pick
+
+            selected = pick(
+                results.results,
+                title=(
+                    f"{source.capitalize()} {media_type} search.\n"
+                    "Press SPACE to select, RETURN to download, CTRL-C to exit."
+                ),
+                multiselect=True,
+                min_selection_count=1,
+            )
+            if not selected:
+                console.print("[yellow]No items chosen. Exiting.")
+                return
+            choices = [item for item, _ in selected]
+        else:
+            from simple_term_menu import TerminalMenu
+
+            menu = TerminalMenu(
+                results.summaries(),
+                preview_command=results.preview,
+                preview_size=0.5,
+                title=(
+                    f"Results for {media_type} '{query}' from {source.capitalize()}\n"
+                    "SPACE - select, ENTER - download, ESC - exit"
+                ),
+                cycle_cursor=True,
+                clear_screen=True,
+                multi_select=True,
+            )
+            chosen = menu.show()
+            if chosen is None:
+                console.print("[yellow]No items chosen. Exiting.")
+                return
+            choices = results.get_choices(chosen)
+
+        await self.add_all_by_id(
+            [(source, item.media_type(), item.id) for item in choices]
+        )
+
+    async def search_take_first(self, source: str, media_type: str, query: str):
+        """Queue only the first normalized search result."""
+
+        client = await self.get_logged_in_client(source)
+        with console_status(f"[bold]Searching {source}", spinner="dots"):
+            pages = await client.search(media_type, query, limit=1)
+        if not pages:
+            console.print(f"[red]No search results found for query {query}")
+            return
+
+        results = SearchResults.from_pages(source, media_type, pages)
+        if not results.results:
+            console.print(f"[red]No search results found for query {query}")
+            return
+        first = results.results[0]
+        await self.add_by_id(source, first.media_type(), first.id)
+
+    async def search_output_file(
+        self, source: str, media_type: str, query: str, filepath: str, limit: int
+    ):
+        """Write normalized search results as an importable JSON list."""
+
+        client = await self.get_logged_in_client(source)
+        with console_status(f"[bold]Searching {source}", spinner="dots"):
+            pages = await client.search(media_type, query, limit=limit)
+        if not pages:
+            console.print(f"[red]No search results found for query {query}")
+            return
+
+        results = SearchResults.from_pages(source, media_type, pages)
+        if not results.results:
+            console.print(f"[red]No search results found for query {query}")
+            return
+        contents = json.dumps(results.as_list(source), indent=4, ensure_ascii=False)
+        async with aiofiles.open(filepath, "w", encoding="utf-8") as output:
+            await output.write(contents)
+        console.print(
+            f"Wrote [purple]{len(results.results)}[/purple] results to "
+            f"[cyan]{filepath}[/cyan] as JSON!"
+        )
+
     async def worker_loop(self, worker_id: int):
         while True:
             pending_item = await self.queue.get()
@@ -211,6 +336,11 @@ class Main:
                 media_item = await pending_item.resolve()
                 if media_item is None:
                     self.skipped_items += 1
+                    failure_callback = getattr(
+                        pending_item, "failure_callback", None
+                    )
+                    if failure_callback is not None:
+                        failure_callback("")
                     # DEBUG: identify what object was skipped
                     pid = getattr(pending_item, "id", None)
                     src = getattr(pending_item, "client", None)
@@ -225,6 +355,9 @@ class Main:
 
             except Exception:
                 self.skipped_items += 1
+                failure_callback = getattr(pending_item, "failure_callback", None)
+                if failure_callback is not None:
+                    failure_callback("")
                 # DEBUG: identify the exact pending object that caused the exception
                 pid = getattr(pending_item, "id", None)
                 src = getattr(pending_item, "client", None)
@@ -239,17 +372,25 @@ class Main:
             finally:
                 self.queue.task_done()
 
-    async def get_logged_in_client(self, source: str):
+    async def get_logged_in_client(self, source: str, *, prompt_on_missing: bool = True):
         client = self.clients.get(source)
         if client is None:
             raise Exception(f"No client named {source}")
         if not client.logged_in:
             prompter = get_prompter(client, self.config)
             if not prompter.has_creds():
+                if not prompt_on_missing:
+                    raise MissingCredentialsError(f"{source} credentials are not configured")
                 await prompter.prompt_and_login()
                 prompter.save()
             else:
-                await client.login()
+                try:
+                    await client.login()
+                except AuthenticationError:
+                    if not prompt_on_missing:
+                        raise
+                    await prompter.prompt_and_login()
+                    prompter.save()
         return client
 
     async def __aenter__(self):
@@ -257,7 +398,9 @@ class Main:
 
     async def __aexit__(self, *_):
         for client in self.clients.values():
-            if hasattr(client, "session"):
+            if hasattr(client, "close"):
+                await client.close()
+            elif hasattr(client, "session"):
                 await client.session.close()
         try:
             if hasattr(self.database, "downloads") and hasattr(self.database.downloads, "close"):

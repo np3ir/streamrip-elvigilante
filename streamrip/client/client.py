@@ -39,6 +39,15 @@ class Client(ABC):
     async def get_downloadable(self, item: str, quality: int) -> Downloadable:
         raise NotImplementedError
 
+    async def get_candidate(self, item: str, quality: int):
+        """Inspect one track as a service-neutral candidate without downloading it."""
+
+        from .candidate import service_candidate
+
+        metadata = await self.get_metadata(item, "track")
+        downloadable = await self.get_downloadable(item, quality)
+        return service_candidate(self.source, metadata, downloadable)
+
     @staticmethod
     def get_rate_limiter(
         requests_per_min: int,

@@ -151,6 +151,8 @@ class QobuzClient(Client):
         rpm = config.session.downloads.requests_per_minute
         self.rate_limiter = self.get_rate_limiter(rpm if rpm > 0 else 60)
         self.secret: Optional[str] = None
+        self.user_id: str | None = None
+        self.user_auth_token: str | None = None
 
     async def login(self):
         self.session = await self.get_session(
@@ -192,14 +194,17 @@ class QobuzClient(Client):
                 "app_id": str(c.app_id),
             }
 
-        logger.debug("Request params %s", params)
+        logger.debug(
+            "Requesting Qobuz login with %s credentials",
+            "token" if c.use_auth_token else "email",
+        )
         status, resp = await self._api_request("user/login", params)
-        logger.debug("Login resp: %s", resp)
+        logger.debug("Qobuz login response status: %s", status)
 
         if status == 401:
-            raise AuthenticationError(f"Invalid credentials from params {params}")
+            raise AuthenticationError("Invalid Qobuz credentials")
         elif status == 400:
-            raise InvalidAppIdError(f"Invalid app id from params {params}")
+            raise InvalidAppIdError("Invalid Qobuz app id")
 
         logger.debug("Logged in to Qobuz")
 
@@ -208,6 +213,8 @@ class QobuzClient(Client):
 
         uat = resp["user_auth_token"]
         self.session.headers.update({"X-User-Auth-Token": uat})
+        self.user_id = str(resp["user"]["id"])
+        self.user_auth_token = uat
 
         self.secret = await self._get_valid_secret(c.secrets)
 
@@ -334,8 +341,28 @@ class QobuzClient(Client):
                 )
             raise NonStreamableError
 
+        from ..multisource import AudioQuality, normalize_sample_rate
+
+        lossless = quality > 1
+        technical_quality = AudioQuality(
+            codec="flac" if lossless else "mp3",
+            lossless=lossless,
+            bit_depth=(resp_json.get("bit_depth") or (16 if quality == 2 else None)),
+            sample_rate_hz=(
+                normalize_sample_rate(resp_json.get("sampling_rate"))
+                or (44100 if quality == 2 else None)
+            ),
+            bitrate_kbps=resp_json.get("bitrate"),
+            channels=resp_json.get("number_of_channels") or 2,
+        )
         return BasicDownloadable(
-            self.session, stream_url, "flac" if quality > 1 else "mp3", source="qobuz"
+            self.session,
+            stream_url,
+            "flac" if lossless else "mp3",
+            source="qobuz",
+            quality=technical_quality,
+            max_bit_depth=16 if quality == 2 else None,
+            max_sample_rate_hz=44100 if quality == 2 else None,
         )
 
     async def _paginate(
@@ -426,9 +453,7 @@ class QobuzClient(Client):
         quality = self.get_quality(quality)
         unix_ts = time.time()
         r_sig = f"trackgetFileUrlformat_id{quality}intentstreamtrack_id{track_id}{unix_ts}{secret}"
-        logger.debug("Raw request signature: %s", r_sig)
         r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).hexdigest()
-        logger.debug("Hashed request signature: %s", r_sig_hashed)
         params = {
             "request_ts": unix_ts,
             "request_sig": r_sig_hashed,
@@ -443,7 +468,11 @@ class QobuzClient(Client):
         returns: status code, json parsed response
         """
         url = f"{QOBUZ_BASE_URL}/{epoint}"
-        logger.debug("api_request: endpoint=%s, params=%s", epoint, params)
+        logger.debug(
+            "api_request: endpoint=%s, parameter_names=%s",
+            epoint,
+            sorted(params),
+        )
         async with self.rate_limiter:
             async with self.session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as response:
                 return response.status, await response.json()

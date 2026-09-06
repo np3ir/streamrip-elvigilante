@@ -122,15 +122,7 @@ class TidalPrompter(CredentialPrompter):
             else:
                 raise Exception
 
-        c = self.config.session.tidal
-        c.user_id = info["user_id"]  # type: ignore
-        c.country_code = info["country_code"]  # type: ignore
-        c.access_token = info["access_token"]  # type: ignore
-        c.refresh_token = info["refresh_token"]  # type: ignore
-        c.token_expiry = info["token_expiry"]  # type: ignore
-
-        self.client._update_authorization_from_config()
-        self.client.logged_in = True
+        self.client.apply_device_auth(info)
         self.save()
 
     def type_check_client(self, client) -> TidalClient:

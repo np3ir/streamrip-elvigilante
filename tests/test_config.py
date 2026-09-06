@@ -7,6 +7,7 @@ import tomlkit
 from streamrip.config import (
     ArtworkConfig,
     CliConfig,
+    ComparisonConfig,
     Config,
     ConfigData,
     ConversionConfig,
@@ -143,6 +144,21 @@ def test_config_file_update():
     os.remove("tests/test_config_old2.toml")
 
 
+def test_public_config_update_creates_non_overwriting_backup(tmp_path):
+    config_path = tmp_path / "config.toml"
+    original = open(OLD_CONFIG, "rb").read()
+    config_path.write_bytes(original)
+    existing_backup = tmp_path / "config.toml.bak"
+    existing_backup.write_text("older backup")
+
+    backup = Config.update_file(os.fspath(config_path))
+
+    assert backup == os.fspath(tmp_path / "config.toml.bak.1")
+    assert (tmp_path / "config.toml.bak.1").read_bytes() == original
+    assert existing_backup.read_text() == "older backup"
+    assert Config(os.fspath(config_path)).file.misc.version == "2.2.0"
+
+
 def test_sample_config_data_properties(sample_config_data):
     # Test the properties of ConfigData
     assert sample_config_data.modified is False  # Ensure initial state is not modified
@@ -247,6 +263,7 @@ def test_sample_config_data_fields(sample_config_data):
             bit_depth=24,
             lossy_bitrate=320,
         ),
+        comparison=ComparisonConfig(),
         misc=MiscConfig(version="2.0", check_for_updates=True),
         lyrics=LyricsConfig(),
         _modified=False,
@@ -264,6 +281,35 @@ def test_sample_config_data_fields(sample_config_data):
     assert sample_config_data.qobuz_filters == test_config.qobuz_filters
     assert sample_config_data.database == test_config.database
     assert sample_config_data.conversion == test_config.conversion
+    assert sample_config_data.comparison == ComparisonConfig()
+
+
+def test_comparison_policy_backfills_and_persists(tmp_path):
+    config_path = tmp_path / "config.toml"
+    shutil.copy(SAMPLE_CONFIG, config_path)
+    config = Config(os.fspath(config_path))
+
+    assert config.session.comparison == ComparisonConfig()
+    config.file.comparison.max_bit_depth = 16
+    config.file.comparison.max_sample_rate = 44.1
+    config.file.comparison.fallback_to_lossy = False
+    config.file.comparison.service_priority = ["deezer", "tidal", "qobuz"]
+    config.file.comparison.library_workers = 4
+    config.file.comparison.library_manifest = False
+    config.file.set_modified()
+    config.save_file()
+
+    reloaded = Config(os.fspath(config_path))
+    assert reloaded.session.comparison.max_bit_depth == 16
+    assert reloaded.session.comparison.max_sample_rate == 44.1
+    assert reloaded.session.comparison.fallback_to_lossy is False
+    assert reloaded.session.comparison.service_priority == [
+        "deezer",
+        "tidal",
+        "qobuz",
+    ]
+    assert reloaded.session.comparison.library_workers == 4
+    assert reloaded.session.comparison.library_manifest is False
 
 
 def test_config_update_on_save():

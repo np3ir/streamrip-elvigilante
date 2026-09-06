@@ -11,6 +11,7 @@ from ..config import Config
 # --- CORRECCIÓN: Importación que faltaba ---
 from ..console import console
 from ..db import Database
+from ..destination_identity import guard_configured_write
 from ..exceptions import NonStreamableError
 from ..filepath_utils import clean_filepath
 from ..metadata import AlbumMetadata
@@ -107,6 +108,7 @@ class PendingAlbum(Pending):
         tracklist = get_album_track_ids(self.client.source, resp)
         folder = self.config.session.downloads.folder
         album_folder = self._album_folder(folder, meta)
+        guard_configured_write(self.config, album_folder)
         os.makedirs(album_folder, exist_ok=True)
         
         # Download album artwork
@@ -144,8 +146,4 @@ class PendingAlbum(Pending):
             meta.format_folder_path(formatter),
             config.filepaths.restrict_characters,
         )
-        # Truncate folder name to leave room for parent path and filename
-        if len(folder) > 150:
-            folder = folder[:150].rstrip()
-
         return os.path.join(parent, folder)

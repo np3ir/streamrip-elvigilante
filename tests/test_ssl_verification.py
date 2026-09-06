@@ -187,23 +187,29 @@ async def test_latest_streamrip_version_creates_session():
         mock_connector.return_value = MagicMock()
 
         # Setup mock responses for API calls
-        mock_session_instance = AsyncMock()
-        mock_client_session.return_value = mock_session_instance
+        mock_session_instance = MagicMock()
+        mock_session_context = MagicMock()
+        mock_session_context.__aenter__ = AsyncMock(
+            return_value=mock_session_instance
+        )
+        mock_session_context.__aexit__ = AsyncMock(return_value=None)
+        mock_client_session.return_value = mock_session_context
 
-        mock_context_manager = AsyncMock()
-        mock_session_instance.get.return_value = mock_context_manager
-        mock_context_manager.__aenter__.return_value.json.return_value = {
-            "info": {"version": "1.0.0"}
-        }
+        mock_response = MagicMock(status=200)
+        mock_response.json = AsyncMock(
+            return_value={"tag_name": "v1.0.0", "body": "notes"}
+        )
+        mock_response_context = MagicMock()
+        mock_response_context.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response_context.__aexit__ = AsyncMock(return_value=None)
+        mock_session_instance.get.return_value = mock_response_context
 
         # Make sure the test doesn't actually wait
         with patch("streamrip.rip.cli.__version__", "1.0.0"):
             # Run with SSL verification parameter
-            try:
-                await latest_streamrip_version(verify_ssl=False)
-            except Exception:
-                # We just need to ensure it doesn't raise TypeError for the verify_ssl parameter
-                pass
+            result = await latest_streamrip_version(verify_ssl=False)
+
+        assert result == ("1.0.0", "notes")
 
         # Verify get_aiohttp_connector_kwargs was called with verify_ssl=False
         mock_get_kwargs.assert_called_once_with(verify_ssl=False)

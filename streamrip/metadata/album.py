@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from ..filepath_utils import clean_filename, clean_filepath, get_alpha_bucket
+from ..multisource import normalize_sample_rate
 from .covers import Covers
 from .util import DEFAULT_ARTIST_SEPARATOR, get_quality_id, safe_get, typed
 
@@ -16,6 +17,53 @@ COPYRIGHT = "©"
 logger = logging.getLogger("streamrip")
 
 genre_clean = re.compile(r"([^→\/]+)")
+
+
+class _ConditionalTemplateValue:
+    """Render tiddl-style conditional format text when the value is true."""
+
+    def __init__(self, value: bool):
+        self.value = bool(value)
+
+    def __format__(self, spec: str) -> str:
+        return spec if self.value else ""
+
+
+class _ExplicitTemplateValue:
+    def __init__(self, value: bool):
+        self.value = bool(value)
+
+    def __format__(self, spec: str) -> str:
+        if not self.value:
+            return ""
+        if "shortparens" in spec:
+            return " (explicit)"
+        if "parens" in spec:
+            return " (Explicit)"
+        if "upper" in spec:
+            return "EXPLICIT" if "long" in spec else "E"
+        return "explicit" if "long" in spec else "E"
+
+    def __str__(self) -> str:
+        return " (explicit)" if self.value else ""
+
+
+@dataclass(slots=True)
+class AlbumTemplate:
+    id: str
+    title: str
+    safe_title: str
+    artist: str
+    safe_artist: str
+    artists: str
+    safe_artists: str
+    date: datetime
+    explicit: _ExplicitTemplateValue
+    master: _ConditionalTemplateValue
+    release: str
+
+    def __str__(self) -> str:
+        return self.title
 
 
 @dataclass(slots=True)
@@ -72,6 +120,30 @@ class AlbumMetadata:
         _copyright = re.sub(r"(?i)\(C\)", COPYRIGHT, _copyright)
         return _copyright
 
+    def template_data(self) -> AlbumTemplate:
+        artist = self.albumartist or "Unknown"
+        title = self.album or "Unknown"
+        return AlbumTemplate(
+            id=self.info.id,
+            title=title,
+            safe_title=clean_filename(title),
+            artist=artist,
+            safe_artist=clean_filename(artist),
+            artists=artist,
+            safe_artists=clean_filename(artist),
+            date=self._template_date(),
+            explicit=_ExplicitTemplateValue(self.info.explicit),
+            master=_ConditionalTemplateValue(self.info.quality >= 3),
+            release=self.release_type,
+        )
+
+    def _template_date(self) -> datetime:
+        raw = self.release_date or self.date or ""
+        try:
+            return datetime.strptime(str(raw)[:10], "%Y-%m-%d")
+        except (TypeError, ValueError):
+            return datetime.min
+
     def format_folder_path(self, formatter: str) -> str:
         none_str = "Unknown"
         # Date cleanup for folders (no shifting)
@@ -87,7 +159,7 @@ class AlbumMetadata:
         artist_clean = clean_filename(self.albumartist)
         album_clean = clean_filename(self.album)
 
-        info: dict[str, str | int | float] = {
+        info: dict[str, object] = {
             # New variable requested in config
             "artist_initials": initials_clean,
 
@@ -105,7 +177,11 @@ class AlbumMetadata:
 
             # Extra aliases for easier config
             "artist": artist_clean,
-            "album": album_clean,
+            # Full tiddl template namespace. Legacy flat aliases above remain
+            # supported so existing Streamrip configurations do not break.
+            "album": self.template_data(),
+            "quality": str(self.info.quality),
+            "now": datetime.now(),
         }
         return clean_filepath(formatter.format(**info))
 
@@ -228,12 +304,22 @@ class AlbumMetadata:
         # Quality and Container
         tidal_quality = resp.get("audioQuality", "LOW")
         # Simple quality mapping
-        quality_map = {"LOW": 0, "HIGH": 1, "LOSSLESS": 2, "HI_RES": 3}
+        quality_map = {
+            "LOW": 0,
+            "HIGH": 1,
+            "LOSSLESS": 2,
+            "HI_RES": 3,
+            "HI_RES_LOSSLESS": 4,
+        }
         quality = quality_map.get(tidal_quality, 0)
 
-        # Tech estimation
-        sampling_rate = 44100 if quality >= 2 else None
-        bit_depth = 24 if tidal_quality == "HI_RES" else (16 if quality >= 2 else None)
+        # Prefer delivered technical properties; estimate only when omitted.
+        sampling_rate = normalize_sample_rate(resp.get("sampleRate"))
+        if sampling_rate is None and quality >= 2:
+            sampling_rate = 44100
+        bit_depth = typed(resp.get("bitDepth"), int | None)
+        if bit_depth is None:
+            bit_depth = 24 if quality >= 3 else (16 if quality >= 2 else None)
         container = "FLAC" if quality >= 2 else "MP4"
 
         item_id = str(resp.get("id"))
@@ -384,7 +470,13 @@ class AlbumMetadata:
         item_id = str(resp.get("id", ""))
         album = album_resp.get("title", "Unknown Album")
         tracktotal = 1
-        raw_date = resp.get("streamStartDate") or resp.get("dateAdded")
+        raw_date = (
+            resp.get("releaseDate")
+            or resp.get("date")
+            or album_resp.get("releaseDate")
+            or resp.get("streamStartDate")
+            or resp.get("dateAdded")
+        )
         release_date, year = cls.correct_release_date(raw_date)
         copyright = resp.get("copyright", "")
         artists = resp.get("artists", [])
@@ -398,10 +490,20 @@ class AlbumMetadata:
         disctotal = resp.get("volumeNumber", 1)
         explicit = resp.get("explicit", False)
         tidal_quality = resp.get("audioQuality", "LOW")
-        quality_map = {"LOW": 0, "HIGH": 1, "LOSSLESS": 2, "HI_RES": 3}
+        quality_map = {
+            "LOW": 0,
+            "HIGH": 1,
+            "LOSSLESS": 2,
+            "HI_RES": 3,
+            "HI_RES_LOSSLESS": 4,
+        }
         quality = quality_map.get(tidal_quality, 0)
-        sampling_rate = 44100 if quality >= 2 else None
-        bit_depth = 24 if tidal_quality == "HI_RES" else (16 if quality >= 2 else None)
+        sampling_rate = normalize_sample_rate(resp.get("sampleRate"))
+        if sampling_rate is None and quality >= 2:
+            sampling_rate = 44100
+        bit_depth = typed(resp.get("bitDepth"), int | None)
+        if bit_depth is None:
+            bit_depth = 24 if quality >= 3 else (16 if quality >= 2 else None)
         covers = Covers.from_tidal(album_resp) or Covers()
         info = AlbumInfo(
             id=item_id,

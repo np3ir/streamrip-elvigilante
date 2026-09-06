@@ -5,7 +5,9 @@ import functools
 import logging
 import os
 import shutil
+import tempfile
 from dataclasses import dataclass, fields
+from dataclasses import field as dataclass_field
 from pathlib import Path
 
 import click
@@ -91,6 +93,19 @@ class ConversionConfig:
 
 
 @dataclass(slots=True)
+class ComparisonConfig:
+    max_bit_depth: int = 0
+    max_sample_rate: float = 0.0
+    prefer_lossless: bool = True
+    fallback_to_lossy: bool = True
+    service_priority: list[str] = dataclass_field(
+        default_factory=lambda: ["tidal", "deezer", "qobuz"]
+    )
+    library_workers: int = 2
+    library_manifest: bool = True
+
+
+@dataclass(slots=True)
 class QobuzDiscographyFilterConfig:
     extras: bool
     repeats: bool
@@ -154,6 +169,7 @@ class DownloadsConfig:
     retry_delay: float = 2.0
     # Maximum wait time in seconds between retries (caps exponential backoff)
     max_wait: float = 60.0
+    destination_identity: str = "off"
 
 
 @dataclass(slots=True)
@@ -208,6 +224,7 @@ class ConfigData:
     cli: CliConfig
     database: DatabaseConfig
     conversion: ConversionConfig
+    comparison: ComparisonConfig
 
     misc: MiscConfig
 
@@ -230,6 +247,11 @@ class ConfigData:
             dl_data["retry_delay"] = 2.0
         if "max_wait" not in dl_data:
             dl_data["max_wait"] = 60.0
+        if "destination_identity" not in dl_data:
+            dl_data["destination_identity"] = "off"
+        if dl_data["destination_identity"] not in ("off", "strict"):
+            logger.warning("Invalid destination_identity; resetting to 'off'.")
+            dl_data["destination_identity"] = "off"
         # Ensure max_retries is non-negative; negative values silently skip downloads.
         # Guard against non-numeric / malformed values from bad TOML input.
         try:
@@ -281,6 +303,27 @@ class ConfigData:
         cli = CliConfig(**toml["cli"])  # type: ignore
         database = DatabaseConfig(**toml["database"])  # type: ignore
         conversion = ConversionConfig(**toml["conversion"])  # type: ignore
+        comparison_raw = toml.get("comparison") or {}
+        comparison = ComparisonConfig(**dict(comparison_raw))  # type: ignore
+        if comparison.max_bit_depth < 0:
+            comparison.max_bit_depth = 0
+        if comparison.max_sample_rate < 0:
+            comparison.max_sample_rate = 0.0
+        try:
+            comparison.library_workers = min(
+                8, max(1, int(comparison.library_workers))
+            )
+        except (TypeError, ValueError):
+            comparison.library_workers = 2
+        valid_services = ("tidal", "deezer", "qobuz")
+        configured_priority = [
+            str(service).lower()
+            for service in comparison.service_priority
+            if str(service).lower() in valid_services
+        ]
+        comparison.service_priority = list(
+            dict.fromkeys((*configured_priority, *valid_services))
+        )
         misc = MiscConfig(**toml["misc"])  # type: ignore
 
         return cls(
@@ -300,6 +343,7 @@ class ConfigData:
             cli=cli,
             database=database,
             conversion=conversion,
+            comparison=comparison,
             misc=misc,
         )
 
@@ -333,6 +377,9 @@ class ConfigData:
         update_toml_section_from_config(self.toml["cli"], self.cli)
         update_toml_section_from_config(self.toml["database"], self.database)
         update_toml_section_from_config(self.toml["conversion"], self.conversion)
+        if "comparison" not in self.toml:
+            self.toml["comparison"] = {}
+        update_toml_section_from_config(self.toml["comparison"], self.comparison)
 
     def get_source(
         self,
@@ -385,12 +432,32 @@ class Config:
 
         update_config(old_toml, new_toml)
 
-        with open(old_path, "w") as f:
-            f.write(dumps(new_toml))
+        directory = os.path.dirname(os.path.abspath(old_path))
+        fd, temporary = tempfile.mkstemp(
+            prefix=".streamrip-config-", suffix=".tmp", dir=directory, text=True
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(dumps(new_toml))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, old_path)
+        finally:
+            try:
+                os.remove(temporary)
+            except FileNotFoundError:
+                pass
 
     @classmethod
     def update_file(cls, path: str):
+        backup = f"{path}.bak"
+        suffix = 1
+        while os.path.exists(backup):
+            backup = f"{path}.bak.{suffix}"
+            suffix += 1
+        shutil.copy2(path, backup)
         cls._update_file(path, BLANK_CONFIG_PATH)
+        return backup
 
     @classmethod
     def defaults(cls):

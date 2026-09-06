@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import base64
 import json
@@ -6,15 +8,24 @@ import os
 import random
 import re
 import time
+from types import SimpleNamespace
 
 import aiohttp
 import click
 from aiohttp import ClientSession, ClientTimeout, CookieJar, TCPConnector
 
 from ..config import Config
-from ..exceptions import NonStreamableError
+from ..exceptions import (
+    AuthenticationError,
+    MissingCredentialsError,
+    NonStreamableError,
+    TidalRateLimitError,
+)
+from .audio_probe import probe_flac_quality
 from .client import Client
 from .downloadable import TidalDownloadable, TidalVideoDownloadable
+from .request_budget import RateLimitGuard, SharedRequestBudget
+from .tidal_manifest import parse_tidal_manifest
 
 logger = logging.getLogger("streamrip")
 
@@ -27,7 +38,7 @@ AUTH_URL = "https://auth.tidal.com/v1/oauth2"
 #   export TIDAL_CLIENT_ID=your_id
 #   export TIDAL_CLIENT_SECRET=your_secret
 # If not set, bundled defaults are used (same approach as tiddl).
-_BUNDLED_B64 = "NE4zbjZRMXg5NUxMNUs3cDtvS09YZkpXMzcxY1g2eGFaMFB5aGdHTkJkTkxsQlpkNEFLS1lvdWdNamlrPQ=="
+_BUNDLED_B64 = "ZlgySnhkbW50WldLMGl4VDsxTm45QWZEQWp4cmdKRkpiS05XTGVBeUtHVkdtSU51WFBQTEhWWEF2eEFnPQ=="
 
 
 def _get_client_credentials() -> tuple[str, str]:
@@ -52,20 +63,27 @@ def _get_client_credentials() -> tuple[str, str]:
 
 
 CLIENT_ID, CLIENT_SECRET = _get_client_credentials()
-AUTH = aiohttp.BasicAuth(login=CLIENT_ID, password=CLIENT_SECRET)
-
+TV_CLIENT_ID = "4N3n6Q1x95LL5K7p"
+TV_CLIENT_SECRET = "oKOXfJW371cX6xaZ0PyhgGNBdNLlBZd4AKKYougMjik="
 STREAM_URL_REGEX = re.compile(
     r"#EXT-X-STREAM-INF:BANDWIDTH=\d+,AVERAGE-BANDWIDTH=\d+,CODECS=\"(?!jpeg)[^\"]+\",RESOLUTION=\d+x\d+\n(.+)"
 )
 
 QUALITY_MAP = {
-    0: "LOW", 1: "HIGH", 2: "LOSSLESS", 3: "HI_RES", 4: "HI_RES_LOSSLESS",
+    0: "LOW",
+    1: "HIGH",
+    2: "LOSSLESS",
+    3: "HI_RES",
+    4: "HI_RES_LOSSLESS",
 }
 
-QUALITY_PRIORITY = [3, 2, 1, 0]
+QUALITY_PRIORITY = [4, 3, 2, 1, 0]
 
 # Dedicated token file — separate from config.toml, with restricted permissions
 _TOKEN_FILE = os.path.join(click.get_app_dir("streamrip"), "tidal_token.json")
+_FALLBACK_TOKEN_FILE = os.path.join(
+    click.get_app_dir("streamrip"), "tidal_token_fallback.json"
+)
 
 # Refresh threshold: refresh when less than 1 hour remains (like tiddl)
 _REFRESH_THRESHOLD = 3600
@@ -107,12 +125,39 @@ class TidalTokenStore:
 
 class TidalClient(Client):
     source = "tidal"
-    max_quality = 3
+    max_quality = 4
 
-    def __init__(self, config: Config):
+    def __init__(
+        self,
+        config: Config,
+        request_budget: SharedRequestBudget | None = None,
+        rate_limit_guard: RateLimitGuard | None = None,
+        *,
+        oauth_credentials: tuple[str, str] | None = None,
+        token_store: TidalTokenStore | None = None,
+        token_role: str = "primary",
+        allow_lossless_fallback: bool = True,
+    ):
         self.logged_in = False
         self.global_config = config
-        self.config = config.session.tidal
+        self.token_role = token_role
+        self.config = (
+            config.session.tidal
+            if token_role == "primary"
+            else SimpleNamespace(
+                access_token="",
+                refresh_token="",
+                token_expiry="",
+                user_id="",
+                country_code="",
+            )
+        )
+        self.oauth_client_id, self.oauth_client_secret = (
+            oauth_credentials or (CLIENT_ID, CLIENT_SECRET)
+        )
+        self.allow_lossless_fallback = allow_lossless_fallback
+        self._lossless_fallback_client: TidalClient | None = None
+        self._lossless_fallback_checked = False
         
         # --- CONFIGURACIÓN DE SEGURIDAD ---
         rpm = config.session.downloads.requests_per_minute
@@ -124,17 +169,34 @@ class TidalClient(Client):
         safe_conn = max_conn if (0 < max_conn <= 12) else 2
 
         self.semaphore = asyncio.Semaphore(safe_conn)
-        self._rate_lock = asyncio.Lock()
-        self._last_request_time = 0.0
-        self._min_interval = 60.0 / safe_rpm  # e.g. 1.0s at 60 RPM
+        self.request_budget = request_budget or SharedRequestBudget(safe_rpm)
+        self.rate_limit_guard = rate_limit_guard or RateLimitGuard()
         self._rate_limit_delay: float = 0.0  # Adaptive: grows on 429, shrinks on success
         # --------------------------------------------
 
         self.auth_lock = asyncio.Lock()
-        self._flac_downloaded = set()
-        self.token_store = TidalTokenStore()
+        self.token_store = token_store or TidalTokenStore()
 
-    async def login(self):
+    @classmethod
+    def lossless_fallback(cls, config: Config) -> TidalClient:
+        """Build the TV-client session used for reliable 16-bit FLAC."""
+
+        return cls(
+            config,
+            oauth_credentials=(TV_CLIENT_ID, TV_CLIENT_SECRET),
+            token_store=TidalTokenStore(_FALLBACK_TOKEN_FILE),
+            token_role="fallback",
+            allow_lossless_fallback=False,
+        )
+
+    @staticmethod
+    def has_lossless_fallback() -> bool:
+        stored = TidalTokenStore(_FALLBACK_TOKEN_FILE).load()
+        return bool(stored and stored.get("access_token"))
+
+    async def _open_session(self):
+        if hasattr(self, "session") and not self.session.closed:
+            return
         jar = CookieJar(unsafe=True)
         connector = TCPConnector(limit=10, force_close=True, enable_cleanup_closed=True)
         timeout = ClientTimeout(total=3600, connect=30, sock_read=60)
@@ -162,6 +224,9 @@ class TidalClient(Client):
         if not self.global_config.session.downloads.verify_ssl:
             self.session.connector._ssl = False
 
+    async def login(self):
+        await self._open_session()
+
         c = self.config
 
         # Load tokens from dedicated file if available; fall back to config.toml
@@ -172,6 +237,10 @@ class TidalClient(Client):
             c.token_expiry  = stored.get("token_expiry", c.token_expiry)
             c.user_id       = stored.get("user_id", c.user_id)
             c.country_code  = stored.get("country_code", c.country_code)
+        elif self.token_role != "primary":
+            raise MissingCredentialsError(
+                "TIDAL fallback credentials are not configured"
+            )
 
         self.token_expiry  = float(c.token_expiry) if c.token_expiry else 0
         self.refresh_token = c.refresh_token
@@ -183,6 +252,12 @@ class TidalClient(Client):
             if c.access_token:
                 await self._login_by_access_token(c.access_token, c.user_id)
         self.logged_in = True
+
+    async def close(self):
+        if self._lossless_fallback_client is not None:
+            await self._lossless_fallback_client.close()
+        if hasattr(self, "session") and not self.session.closed:
+            await self.session.close()
 
     async def get_artist_albums_stream(self, artist_id: str):
         queue = asyncio.Queue()
@@ -317,82 +392,170 @@ class TidalClient(Client):
         if media_type == "video":
             return await self._get_video_downloadable(track_id, quality)
 
-        tid_str = str(track_id)
-        if tid_str in self._flac_downloaded:
-            raise NonStreamableError(f"Track {track_id} already downloaded")
+        # The TV client is substantially less restrictive and reliably serves
+        # the ordinary LOSSLESS tier.  Route a 16-bit ceiling there first so a
+        # large CD-quality run does not consume HiRes quota for every track.
+        # If TV cannot produce lossless audio, retain its best lossy result and
+        # let the primary cascade try to improve it without repeating TV later.
+        fallback_attempted = False
+        best_lossy = None
+        if quality == 2 and getattr(self, "allow_lossless_fallback", False):
+            logger.debug(
+                "TIDAL playback route for %s: TV first (16-bit ceiling)",
+                track_id,
+            )
+            fallback = await self._get_lossless_fallback_client()
+            if fallback is not None:
+                fallback_attempted = True
+                try:
+                    fallback_result = await fallback.get_downloadable(
+                        track_id, quality=2
+                    )
+                except TidalRateLimitError:
+                    raise
+                except Exception as error:
+                    logger.debug(
+                        "TIDAL TV-first LOSSLESS request failed for %s: %s",
+                        track_id,
+                        error,
+                    )
+                else:
+                    if fallback_result.quality.lossless:
+                        logger.debug(
+                            "TIDAL playback route for %s: TV satisfied lossless ceiling; "
+                            "primary HiRes not requested",
+                            track_id,
+                        )
+                        return fallback_result
+                    best_lossy = fallback_result
 
         qualities = [q for q in QUALITY_PRIORITY if q <= quality]
         if not qualities: qualities = QUALITY_PRIORITY
-        
+
         last_err = None
-        
-        # Phase 1: Try FLAC
+
         for q in qualities:
             try:
                 q_val = QUALITY_MAP.get(q, "HIGH")
                 params = {"audioquality": q_val, "playbackmode": "STREAM", "assetpresentation": "FULL", "prefetch": "false"}
                 try:
                     resp = await self._api_request(f"tracks/{track_id}/playbackinfopostpaywall/v4", params, base=API_BASE)
+                except TidalRateLimitError:
+                    raise
                 except:
                     resp = await self._api_request(f"tracks/{track_id}/playbackinfopostpaywall", params, base=API_BASE)
 
-                if "manifest" in resp:
-                    manifest = json.loads(base64.b64decode(resp["manifest"]).decode("utf-8"))
-                else:
-                    manifest = resp
-                
-                url = manifest.get("urls", [])[0] if "urls" in manifest else ""
-                if not url: continue
-                
-                codec = manifest.get("codecs", "flac")
-                if not codec or not isinstance(codec, str): continue
-                
-                codecs_list = [c.strip().lower() for c in codec.split(",")]
-                if "flac" in codecs_list:
-                    enc = manifest.get("keyId")
-                    if manifest.get("encryptionType") == "NONE": enc = None
-                    self._flac_downloaded.add(tid_str)
-                    return TidalDownloadable(self.session, url=url, codec="flac", encryption_key=enc, restrictions=manifest.get("restrictions"))
-                
-            except NonStreamableError: raise
+                manifest = parse_tidal_manifest(resp)
+                measured_quality = None
+                if manifest.quality.lossless:
+                    try:
+                        measured_quality = await probe_flac_quality(
+                            self.session, manifest.urls, manifest.quality
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Could not inspect TIDAL stream header for %s",
+                            track_id,
+                            exc_info=True,
+                        )
+                delivered_quality = measured_quality or manifest.quality
+                downloadable = TidalDownloadable(
+                    self.session,
+                    url=None,
+                    codec=manifest.codec,
+                    encryption_key=manifest.encryption_key,
+                    restrictions=manifest.restrictions,
+                    urls=manifest.urls,
+                    quality=delivered_quality,
+                    max_bit_depth=16 if q == 2 else None,
+                    max_sample_rate_hz=44100 if q == 2 else None,
+                )
+                if (
+                    manifest.quality.lossless
+                    and q == 2
+                    and (
+                        measured_quality is None
+                        or measured_quality.bit_depth is None
+                        or measured_quality.bit_depth > 16
+                    )
+                ):
+                    if measured_quality is None:
+                        logger.warning(
+                            "Could not verify TIDAL's 16-bit stream; "
+                            "continuing the quality cascade"
+                        )
+                    else:
+                        logger.info(
+                            "TIDAL returned %s-bit audio for the 16-bit tier; "
+                            "continuing the quality cascade",
+                            measured_quality.bit_depth,
+                        )
+                    continue
+                if delivered_quality.lossless:
+                    return downloadable
+                if best_lossy is None or delivered_quality.rank > best_lossy.quality.rank:
+                    best_lossy = downloadable
+            except (NonStreamableError, TidalRateLimitError):
+                raise
             except Exception as e:
                 last_err = e
                 continue
-        
-        # Phase 2: Try M4A/AAC
-        for q in qualities:
-            try:
-                q_val = QUALITY_MAP.get(q, "HIGH")
-                params = {"audioquality": q_val, "playbackmode": "STREAM", "assetpresentation": "FULL", "prefetch": "false"}
+
+        if (
+            best_lossy is not None
+            and quality >= 2
+            and getattr(self, "allow_lossless_fallback", False)
+            and not fallback_attempted
+        ):
+            fallback = await self._get_lossless_fallback_client()
+            if fallback is not None:
                 try:
-                    resp = await self._api_request(f"tracks/{track_id}/playbackinfopostpaywall/v4", params, base=API_BASE)
-                except:
-                    resp = await self._api_request(f"tracks/{track_id}/playbackinfopostpaywall", params, base=API_BASE)
-
-                if "manifest" in resp:
-                    manifest = json.loads(base64.b64decode(resp["manifest"]).decode("utf-8"))
+                    fallback_result = await fallback.get_downloadable(
+                        track_id, quality=2
+                    )
+                except Exception as error:
+                    logger.debug(
+                        "TIDAL TV LOSSLESS fallback failed for %s: %s",
+                        track_id,
+                        error,
+                    )
                 else:
-                    manifest = resp
-                
-                url = manifest.get("urls", [])[0] if "urls" in manifest else ""
-                if not url: continue
-                
-                codec = manifest.get("codecs", "flac")
-                if not codec or not isinstance(codec, str): continue
-                
-                codecs_list = [c.strip().lower() for c in codec.split(",")]
-                if "m4a" in codecs_list or "aac" in codecs_list:
-                    enc = manifest.get("keyId")
-                    if manifest.get("encryptionType") == "NONE": enc = None
-                    self._flac_downloaded.add(tid_str)
-                    return TidalDownloadable(self.session, url=url, codec="m4a", encryption_key=enc, restrictions=manifest.get("restrictions"))
-                
-            except NonStreamableError: raise
-            except Exception as e:
-                last_err = e
-                continue
-        
-        raise NonStreamableError(f"No FLAC or M4A available: {last_err}")
+                    if fallback_result.quality.rank > best_lossy.quality.rank:
+                        return fallback_result
+        if best_lossy is not None:
+            return best_lossy
+        raise NonStreamableError(f"No playable TIDAL stream available: {last_err}")
+
+    async def _get_lossless_fallback_client(self) -> TidalClient | None:
+        """Return the optional TV-token client used for 16-bit FLAC fallback."""
+
+        if self._lossless_fallback_client is None and not self._lossless_fallback_checked:
+            self._lossless_fallback_checked = True
+            fallback = self.lossless_fallback(self.global_config)
+            fallback.request_budget = self.request_budget
+            fallback.rate_limit_guard = self.rate_limit_guard
+            try:
+                await fallback.login()
+            except MissingCredentialsError:
+                await fallback.close()
+                return None
+            self._lossless_fallback_client = fallback
+        return self._lossless_fallback_client
+
+    def apply_device_auth(self, info: dict[str, int | str]) -> None:
+        """Install and persist one completed device-flow authorization."""
+
+        c = self.config
+        c.user_id = info["user_id"]
+        c.country_code = info["country_code"]
+        c.access_token = info["access_token"]
+        c.refresh_token = info["refresh_token"]
+        c.token_expiry = info["token_expiry"]
+        self.refresh_token = str(c.refresh_token)
+        self.token_expiry = float(c.token_expiry)
+        self._update_authorization_from_config()
+        self._persist_token()
+        self.logged_in = True
 
     async def _get_video_downloadable(self, video_id: str, quality: int):
         q_map = {0: "LOW", 1: "MEDIUM", 2: "HIGH", 3: "HIGH"}
@@ -407,6 +570,8 @@ class TidalClient(Client):
         
         try:
             resp = await self._api_request(f"videos/{video_id}/playbackinfopostpaywall/v4", params, base=API_BASE)
+        except TidalRateLimitError:
+            raise
         except:
             resp = await self._api_request(f"videos/{video_id}/playbackinfopostpaywall", params, base=API_BASE)
 
@@ -451,19 +616,47 @@ class TidalClient(Client):
         except Exception as e:
             logger.warning(f"Could not persist Tidal token: {e}")
 
-    async def _refresh_access_token(self):
+    async def _refresh_access_token(
+        self,
+        *,
+        force: bool = False,
+        stale_access_token: str | None = None,
+    ):
         async with self.auth_lock:
-            # Skip if token was already refreshed by a concurrent request
-            if self.config.token_expiry and (float(self.config.token_expiry) - time.time() > _REFRESH_THRESHOLD): return
+            # A concurrent 401 handler may already have replaced the failed token.
+            if stale_access_token and self.config.access_token != stale_access_token:
+                return
+            if (
+                not force
+                and self.config.token_expiry
+                and float(self.config.token_expiry) - time.time() > _REFRESH_THRESHOLD
+            ):
+                return
             logger.info("Refreshing Tidal token...")
-            data = {"client_id": CLIENT_ID, "refresh_token": self.refresh_token, "grant_type": "refresh_token", "scope": "r_usr+w_usr+w_sub"}
+            data = {
+                "client_id": getattr(self, "oauth_client_id", CLIENT_ID),
+                "client_secret": getattr(
+                    self, "oauth_client_secret", CLIENT_SECRET
+                ),
+                "refresh_token": self.refresh_token,
+                "grant_type": "refresh_token",
+                "scope": "r_usr+w_usr+w_sub",
+            }
             try:
                 # Do NOT use the semaphore here: if all connections are waiting for
                 # this refresh to complete, using the semaphore would deadlock.
-                async with self.session.post(f"{AUTH_URL}/token", data=data, auth=AUTH) as resp:
+                async with self.session.post(
+                    f"{AUTH_URL}/token",
+                    data=data,
+                ) as resp:
                     resp_data = await resp.json()
 
                 if resp_data.get("status", 200) != 200:
+                    if resp_data.get("error") == "invalid_client":
+                        raise AuthenticationError(
+                            "The saved TIDAL session uses an unavailable OAuth "
+                            "client and must be authorized again"
+                        )
                     raise Exception(f"Refresh failed: {resp_data}")
 
                 c = self.config
@@ -478,6 +671,54 @@ class TidalClient(Client):
             except Exception as e:
                 logger.error(f"Refresh failed: {e}")
                 raise e
+
+    async def _get_device_code(self) -> tuple[str, str]:
+        """Start TIDAL device authorization and return code plus login URI."""
+
+        response = await self._api_post(
+            f"{AUTH_URL}/device_authorization",
+            {
+                "client_id": getattr(self, "oauth_client_id", CLIENT_ID),
+                "scope": "r_usr+w_usr+w_sub",
+            },
+        )
+        if response.get("status", 200) != 200:
+            raise AuthenticationError("TIDAL device authorization failed")
+        return response["deviceCode"], response["verificationUriComplete"]
+
+    async def _get_auth_status(
+        self, device_code: str
+    ) -> tuple[int, dict[str, int | str]]:
+        """Poll TIDAL device authorization: 0 success, 2 pending, 1 failed."""
+
+        response = await self._api_post(
+            f"{AUTH_URL}/token",
+            {
+                "client_id": getattr(self, "oauth_client_id", CLIENT_ID),
+                "client_secret": getattr(
+                    self, "oauth_client_secret", CLIENT_SECRET
+                ),
+                "device_code": device_code,
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "scope": "r_usr+w_usr+w_sub",
+            },
+        )
+        if response.get("status", 200) != 200:
+            pending = response.get("error") == "authorization_pending" or (
+                response.get("status") == 400 and response.get("sub_status") == 1002
+            )
+            return (2 if pending else 1), {}
+
+        user = response.get("user") or {}
+        return 0, {
+            "user_id": user.get("userId", response.get("user_id", "")),
+            "country_code": user.get(
+                "countryCode", response.get("country_code", "")
+            ),
+            "access_token": response["access_token"],
+            "refresh_token": response.get("refresh_token", ""),
+            "token_expiry": response["expires_in"] + time.time(),
+        }
 
     async def get_lyrics(self, track_id: str) -> str | None:
         """Fetch timed lyrics for a track and return them in LRC format.
@@ -556,6 +797,10 @@ class TidalClient(Client):
             async with self.session.post(url, data=data, auth=auth) as resp: return await resp.json()
 
     async def _api_request(self, path: str, params=None, base: str = API_BASE, retries: int = 10) -> dict:
+        if self.rate_limit_guard.tripped:
+            raise TidalRateLimitError(
+                "TIDAL request safety limit already reached; retry this run later"
+            )
         if params is None: params = {}
         if "countryCode" not in params: params["countryCode"] = self.config.country_code
         if "limit" not in params: params["limit"] = 100
@@ -565,29 +810,31 @@ class TidalClient(Client):
             if self._rate_limit_delay > 0:
                 await asyncio.sleep(self._rate_limit_delay)
 
-            # Fixed interval + small jitter (global, no burst)
-            async with self._rate_lock:
-                now = asyncio.get_event_loop().time()
-                elapsed = now - self._last_request_time
-                wait = self._min_interval - elapsed + random.uniform(0, 0.3)
-                if wait > 0:
-                    await asyncio.sleep(wait)
-                self._last_request_time = asyncio.get_event_loop().time()
+            await self.request_budget.acquire()
 
             async with self.semaphore:
 
                 url = path if path.startswith("http") else f"{base}/{path}"
                 try:
+                    failed_access_token = self.config.access_token
                     async with self.session.get(url, params=params, timeout=ClientTimeout(total=30)) as resp:
                         if resp.status == 429:
                             self._rate_limit_delay = min(5.0, self._rate_limit_delay + 1.0)
+                            if self.rate_limit_guard.note_rate_limited():
+                                raise TidalRateLimitError(
+                                    "TIDAL repeatedly returned HTTP 429; stopping this run "
+                                    "to protect the account"
+                                )
                             wait = int(resp.headers.get("Retry-After", 10)) + random.randint(5, 10)
                             logger.debug(f"Rate Limit hit. Backing off {wait}s... (adaptive_delay={self._rate_limit_delay:.1f}s)")
                             await asyncio.sleep(wait)
                             continue
                         if resp.status == 401:
                             if attempt < 2:
-                                await self._refresh_access_token()
+                                await self._refresh_access_token(
+                                    force=True,
+                                    stale_access_token=failed_access_token,
+                                )
                                 continue
                             else:
                                 raise Exception("Unauthorized (401)")
@@ -599,12 +846,17 @@ class TidalClient(Client):
                             return await resp.json()
                         except:
                             return json.loads(await resp.text())
+                except TidalRateLimitError:
+                    raise
                 except (aiohttp.ClientOSError, asyncio.TimeoutError):
                     await asyncio.sleep(2)
                     continue
                 except Exception as e:
                     if "401" in str(e) and attempt < 2:
-                        await self._refresh_access_token()
+                        await self._refresh_access_token(
+                            force=True,
+                            stale_access_token=failed_access_token,
+                        )
                         continue
                     if attempt == retries:
                         raise e
