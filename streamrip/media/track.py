@@ -188,14 +188,21 @@ class Track(Media):
         """Write fetched lyrics beside the canonical audio file.
 
         This is intentionally safe to call when the audio already exists so a
-        later run can repair a missing sidecar without downloading the audio
-        again. Existing LRC content is replaced only when fresh content was
-        fetched successfully.
+        later run can repair a missing or empty sidecar without downloading
+        the audio again. A non-empty LRC is user/library data and is never
+        overwritten implicitly.
         """
         if not self.lrc_content:
             return
         lrc_path = os.path.splitext(self.download_path)[0] + ".lrc"
         guard_configured_write(self.config, lrc_path)
+        try:
+            if os.path.isfile(lrc_path) and os.path.getsize(lrc_path) > 0:
+                logger.debug("Preserving existing LRC: %s", lrc_path)
+                return
+        except OSError as error:
+            logger.warning("Could not inspect existing LRC file %s: %s", lrc_path, error)
+            return
         temporary_path = ""
         try:
             descriptor, temporary_path = tempfile.mkstemp(

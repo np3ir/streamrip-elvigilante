@@ -84,6 +84,29 @@ async def test_cross_volume_publish_verifies_copy_and_removes_source(
 
 
 @pytest.mark.asyncio
+async def test_cross_volume_publish_accepts_identical_concurrent_destination(
+    tmp_path, monkeypatch
+):
+    payload = b"shared-album-artwork" * 1024
+    source = tmp_path / "stage.jpg"
+    source.write_bytes(payload)
+    destination = tmp_path / "library" / "cover.jpg"
+    destination.parent.mkdir()
+    destination.write_bytes(payload)
+    monkeypatch.setattr("streamrip.file_publish._same_volume", lambda *_args: False)
+    monkeypatch.setattr(
+        "streamrip.file_publish.os.replace",
+        lambda *_args: (_ for _ in ()).throw(PermissionError("in use")),
+    )
+
+    await publish_verified_file(source, destination)
+
+    assert destination.read_bytes() == payload
+    assert not source.exists()
+    assert not list(destination.parent.glob("*.streamrip-part-*"))
+
+
+@pytest.mark.asyncio
 async def test_corrupt_cross_volume_copy_preserves_source_and_prior_final(
     tmp_path, monkeypatch
 ):

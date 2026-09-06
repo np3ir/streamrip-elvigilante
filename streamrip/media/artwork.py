@@ -98,12 +98,13 @@ async def download_artwork(
     if saved_cover_path is None and save_artwork:
         saved_cover_path = os.path.join(folder, "cover.jpg")
         assert l_url is not None
-        downloadables.append(
-            BasicDownloadable(session, l_url, "jpg").download(
-                saved_cover_path,
-                lambda _: None,
-            ),
-        )
+        if not os.path.isfile(saved_cover_path) or os.path.getsize(saved_cover_path) <= 0:
+            downloadables.append(
+                BasicDownloadable(session, l_url, "jpg").download(
+                    saved_cover_path,
+                    lambda _: None,
+                ),
+            )
 
     _, embed_url, embed_cover_path = covers.get_size(config.embed_size)
     if embed_cover_path is None and embed:
@@ -112,12 +113,13 @@ async def download_artwork(
         os.makedirs(embed_dir, exist_ok=True)
         _artwork_tempdirs.add(embed_dir)
         embed_cover_path = os.path.join(embed_dir, f"cover{hash(embed_url)}.jpg")
-        downloadables.append(
-            BasicDownloadable(session, embed_url, "jpg").download(
-                embed_cover_path,
-                lambda _: None,
-            ),
-        )
+        if not os.path.isfile(embed_cover_path) or os.path.getsize(embed_cover_path) <= 0:
+            downloadables.append(
+                BasicDownloadable(session, embed_url, "jpg").download(
+                    embed_cover_path,
+                    lambda _: None,
+                ),
+            )
 
     if len(downloadables) == 0:
         return embed_cover_path, saved_cover_path

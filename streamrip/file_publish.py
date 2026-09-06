@@ -277,6 +277,23 @@ def _publish_sync(source: Path, destination: Path) -> None:
             destination_stage.unlink()
         except FileNotFoundError:
             pass
+        # Concurrent album workers (or another process) may have published the
+        # identical asset after our initial existence check. Some network
+        # filesystems report Access Denied rather than allowing replace over an
+        # open destination. Treat a byte-identical final file as successful.
+        try:
+            if (
+                destination.is_file()
+                and destination.stat().st_size == source.stat().st_size
+                and _sha256(destination) == _sha256(source)
+            ):
+                try:
+                    source.unlink()
+                except OSError:
+                    pass
+                return
+        except OSError:
+            pass
         raise PublishError(f"cross-volume publish failed: {error}", source) from error
     else:
         try:

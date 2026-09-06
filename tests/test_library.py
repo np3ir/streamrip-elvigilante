@@ -314,6 +314,36 @@ async def test_existing_audio_repairs_missing_lrc_without_redownload(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_existing_audio_preserves_nonempty_lrc_without_redownload(tmp_path):
+    config = Config("tests/test_config.toml")
+    metadata = Mock(title="Canonical", artist="Artist", isrc="ISRC1")
+    metadata.info = Mock(id="t1", explicit=False)
+    metadata.format_track_path.return_value = "Canonical"
+    downloadable = Mock(source="tidal", extension="flac")
+    downloadable.download = AsyncMock()
+    database = Mock()
+    database.downloaded.return_value = True
+    database.isrc_downloaded.return_value = True
+    (tmp_path / "Canonical.flac").write_bytes(b"existing")
+    lrc_path = tmp_path / "Canonical.lrc"
+    lrc_path.write_text("[00:01.00]Keep me", encoding="utf-8")
+    item = Track(
+        metadata,
+        downloadable,
+        config,
+        str(tmp_path),
+        None,
+        database,
+        lrc_content="[00:02.00]Replacement",
+    )
+
+    await item.rip()
+
+    assert lrc_path.read_text(encoding="utf-8") == "[00:01.00]Keep me"
+    downloadable.download.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_track_failure_does_not_advance_resume_checkpoint(tmp_path):
     config = Config("tests/test_config.toml")
     config.session.downloads.max_retries = 0
