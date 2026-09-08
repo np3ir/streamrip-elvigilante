@@ -22,10 +22,19 @@ def _artist_name(source: str, metadata: dict) -> str:
 def track_identity(source: str, metadata: dict) -> TrackIdentity:
     """Build a common identity from a service's raw track response."""
 
+    title = str(metadata.get("title") or metadata.get("SNG_TITLE") or "")
+    # TIDAL exposes edition markers (Live, Remastered, etc.) separately while
+    # Deezer generally includes them in ``title``.  Preserve the marker so a
+    # metadata fallback never confuses studio and alternate recordings.
+    if source == "tidal":
+        version = str(metadata.get("version") or "").strip().strip("()")
+        if version and version.casefold() not in title.casefold():
+            title = f"{title} ({version})"
+
     return TrackIdentity(
         source=source,
         source_id=str(metadata.get("id") or metadata.get("SNG_ID") or ""),
-        title=str(metadata.get("title") or metadata.get("SNG_TITLE") or ""),
+        title=title,
         artist=_artist_name(source, metadata),
         duration_seconds=_duration(metadata),
         isrc=metadata.get("isrc") or metadata.get("ISRC"),

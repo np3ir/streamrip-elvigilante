@@ -420,24 +420,48 @@ class Main:
         return self
 
     async def __aexit__(self, *_):
-        workers, self.download_workers = self.download_workers, []
-        for worker in workers:
-            worker.cancel()
-        if workers:
-            await asyncio.gather(*workers, return_exceptions=True)
-        for client in self.clients.values():
-            if hasattr(client, "close"):
-                await client.close()
-            elif hasattr(client, "session"):
-                await client.session.close()
+        async def cleanup():
+            workers, self.download_workers = self.download_workers, []
+            for worker in workers:
+                worker.cancel()
+            if workers:
+                await asyncio.gather(*workers, return_exceptions=True)
+
+            closers = []
+            for client in self.clients.values():
+                if hasattr(client, "close"):
+                    closers.append(client.close())
+                elif hasattr(client, "session"):
+                    closers.append(client.session.close())
+            if closers:
+                results = await asyncio.gather(*closers, return_exceptions=True)
+                for result in results:
+                    if isinstance(result, Exception):
+                        logger.debug("Client cleanup failed", exc_info=result)
+
+            try:
+                if hasattr(self.database, "downloads") and hasattr(
+                    self.database.downloads, "close"
+                ):
+                    self.database.downloads.close()
+                if hasattr(self.database, "failed") and hasattr(
+                    self.database.failed, "close"
+                ):
+                    self.database.failed.close()
+            except Exception:
+                logger.debug("Database cleanup failed", exc_info=True)
+            finally:
+                remove_artwork_tempdirs()
+
+        # Ctrl+C cancels the command task. Keep resource cleanup in a separate
+        # shielded task so every aiohttp session closes before cancellation is
+        # re-raised to Click.
+        cleanup_task = asyncio.create_task(cleanup())
         try:
-            if hasattr(self.database, "downloads") and hasattr(self.database.downloads, "close"):
-                self.database.downloads.close()
-            if hasattr(self.database, "failed") and hasattr(self.database.failed, "close"):
-                self.database.failed.close()
-        except Exception:
-            pass
-        remove_artwork_tempdirs()
+            await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError:
+            await cleanup_task
+            raise
 
 
 def run_main():

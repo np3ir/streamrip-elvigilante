@@ -49,6 +49,15 @@ def test_library_command_registers_mass_processing_safety_options():
     assert "manifest" in names
     assert "manifest_path" in names
     assert "save_lyrics" in names
+    assert "allow_spatial" in names
+    assert "fallback_to_lossy" in names
+
+
+def test_library_index_commands_are_registered():
+    group = rip.commands["library-index"]
+
+    assert set(group.commands) == {"build", "update", "status", "duplicates"}
+    assert "workers" in [parameter.name for parameter in group.commands["build"].params]
 
 
 def test_help_invocation_is_detected_before_config_loading():

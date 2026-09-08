@@ -98,6 +98,7 @@ class ComparisonConfig:
     max_sample_rate: float = 0.0
     prefer_lossless: bool = True
     fallback_to_lossy: bool = True
+    allow_spatial: bool = False
     service_priority: list[str] = dataclass_field(
         default_factory=lambda: ["tidal", "deezer", "qobuz"]
     )

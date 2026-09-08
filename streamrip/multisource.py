@@ -91,8 +91,11 @@ class QualityCeiling:
     sample_rate_hz: int | None = None
     prefer_lossless: bool = True
     fallback_to_lossy: bool = True
+    allow_spatial: bool = False
 
     def allows(self, quality: AudioQuality) -> bool:
+        if quality.spatial and not self.allow_spatial:
+            return False
         # PCM bit depth/sample rate do not describe lossy codecs consistently;
         # lossy delivery remains the final fallback below lossless candidates.
         if not quality.lossless:

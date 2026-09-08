@@ -129,6 +129,7 @@ class PendingLibraryTrack(Pending):
             completion_callback=self.completion_callback,
             failure_callback=self.failure_callback,
             failure_id=self.audio_id,
+            skip_isrc_check=True,
         )
 
     async def _canonical_album(

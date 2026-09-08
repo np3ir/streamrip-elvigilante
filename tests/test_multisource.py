@@ -168,6 +168,22 @@ def test_ceiling_can_forbid_lossy_fallback():
         )
 
 
+def test_spatial_fallback_requires_explicit_opt_in():
+    atmos = candidate(
+        "tidal",
+        AudioQuality(
+            codec="eac3", lossless=False, bitrate_kbps=768, channels=6,
+            spatial=True,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="quality ceiling"):
+        choose_best([atmos], QualityCeiling(bit_depth=16))
+    assert choose_best(
+        [atmos], QualityCeiling(bit_depth=16, allow_spatial=True)
+    ) is atmos
+
+
 def test_sample_rate_ceiling_excludes_unknown_and_above_ceiling_lossless():
     unknown = candidate("tidal", AudioQuality(codec="flac", lossless=True))
     high_rate = candidate(

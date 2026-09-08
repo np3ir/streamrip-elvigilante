@@ -6,8 +6,12 @@ from unittest.mock import Mock
 import pytest
 
 from streamrip.client.request_budget import RateLimitGuard
-from streamrip.client.tidal import TidalClient
-from streamrip.exceptions import AuthenticationError, TidalRateLimitError
+from streamrip.client.tidal import TidalClient, TidalTokenStore
+from streamrip.exceptions import (
+    AuthenticationError,
+    TidalRateLimitError,
+    TidalSessionRejectedError,
+)
 
 
 class FakeResponse:
@@ -29,6 +33,7 @@ class ResponseContext:
 
 class FakeSession:
     def __init__(self):
+        self.closed = False
         self.headers = {}
         self.post_calls = 0
         self.post_kwargs = None
@@ -37,6 +42,32 @@ class FakeSession:
         self.post_calls += 1
         self.post_kwargs = _kwargs
         return ResponseContext()
+
+
+class JsonResponseContext:
+    def __init__(self, payload):
+        self.payload = payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def json(self):
+        return self.payload
+
+
+class JsonResponseSession:
+    def __init__(self, payload):
+        self.headers = {}
+        self.payload = payload
+        self.post_calls = 0
+        self.closed = False
+
+    def post(self, *_args, **_kwargs):
+        self.post_calls += 1
+        return JsonResponseContext(self.payload)
 
 
 class RateLimitedResponse:
@@ -79,6 +110,11 @@ def tidal_client(access_token="old-token"):
     client.refresh_token = "old-refresh"
     client.session = FakeSession()
     client.token_store = Mock()
+    client.token_store.load.return_value = None
+    client.oauth_client_id = "client-id"
+    client.oauth_client_secret = "client-secret"
+    client._refresh_blocked = False
+    client.token_role = "primary"
     return client
 
 
@@ -96,8 +132,9 @@ async def test_forced_refresh_ignores_future_expiry_after_401():
     assert client.refresh_token == "new-refresh"
     assert client.session.headers["authorization"] == "Bearer new-token"
     assert client.session.post_kwargs["data"]["client_id"]
-    assert client.session.post_kwargs["data"]["client_secret"]
-    assert "headers" not in client.session.post_kwargs
+    assert "client_secret" not in client.session.post_kwargs["data"]
+    assert "scope" not in client.session.post_kwargs["data"]
+    assert client.session.post_kwargs["headers"]["Authorization"].startswith("Basic ")
 
 
 @pytest.mark.asyncio
@@ -110,6 +147,61 @@ async def test_concurrent_401_does_not_refresh_token_twice():
     )
 
     assert client.session.post_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_rejected_session_stops_refresh_without_exposing_payload():
+    client = tidal_client()
+    client.session = JsonResponseSession(
+        {
+            "error": "abuse_detected",
+            "error_description": "private provider detail",
+            "status": 403,
+            "sub_status": 12001,
+        }
+    )
+
+    with pytest.raises(TidalSessionRejectedError) as raised:
+        await client._refresh_access_token(force=True)
+
+    message = str(raised.value)
+    assert "saved OAuth session" in message
+    assert "does not prove" in message
+    assert "403/12001" in message
+    assert "private provider detail" not in message
+    assert client.session.post_calls == 1
+    assert client.config.access_token == "old-token"
+
+
+@pytest.mark.asyncio
+async def test_preventive_refresh_rejection_keeps_unexpired_access_token():
+    client = tidal_client()
+    client.config.token_expiry = time.time() + 60
+    client.session = JsonResponseSession(
+        {
+            "error": "abuse_detected",
+            "status": 403,
+            "sub_status": 12001,
+        }
+    )
+
+    await client.login()
+
+    assert client.logged_in is True
+    assert client._refresh_blocked is True
+    assert client.session.headers["authorization"] == "Bearer old-token"
+
+
+def test_token_store_writes_atomically_with_client_identity(tmp_path):
+    path = tmp_path / "token.json"
+    store = TidalTokenStore(str(path))
+
+    store.save("access", "refresh", 123.0, "user", "US", "client-id")
+
+    saved = store.load()
+    assert saved["client_id"] == "client-id"
+    assert saved["refresh_token"] == "refresh"
+    assert not list(tmp_path.glob("*.tmp"))
 
 
 @pytest.mark.asyncio

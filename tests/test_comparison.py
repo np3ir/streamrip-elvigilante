@@ -4,6 +4,7 @@ import pytest
 
 from streamrip.comparison import (
     MultiSourceComparator,
+    catalog_match,
     download_selected,
     format_quality,
     resolve_comparison_collection,
@@ -93,6 +94,21 @@ def test_flattens_service_search_pages():
     assert len(search_items("qobuz", [search_page("qobuz", "q1")])) == 1
     assert len(search_items("deezer", [search_page("deezer", "d1")])) == 1
     assert len(search_items("tidal", [search_page("tidal", "t1")])) == 1
+
+
+def test_catalog_match_tolerates_conflicting_isrc_only_for_strong_metadata():
+    tidal = TrackIdentity(
+        "tidal", "t1", "Memo Rex (En Vivo)", "Zoé", 407, "MXUM72503877"
+    )
+    deezer = TrackIdentity(
+        "deezer", "d1", "Memo Rex (En Vivo)", "Zoé", 407, "MXUM72503867"
+    )
+    wrong_edition = TrackIdentity(
+        "deezer", "d2", "Memo Rex", "Zoé", 226, "MXF740600001"
+    )
+
+    assert catalog_match(tidal, deezer).name == "METADATA"
+    assert catalog_match(tidal, wrong_edition).name == "NONE"
 
 
 def test_formats_normalized_quality_for_cli():
@@ -242,6 +258,23 @@ async def test_compares_concurrently_and_selects_highest_fidelity():
 
 
 @pytest.mark.asyncio
+async def test_exact_isrc_lookup_precedes_empty_text_search():
+    deezer_result = candidate("deezer", "d1", 16, 44100)
+
+    class ExactDeezer(FakeClient):
+        async def lookup_isrc(self, isrc):
+            assert isrc == "USABC1234567"
+            return search_page("deezer", "d1")["data"][0]
+
+    deezer = ExactDeezer("deezer", deezer_result, pages=[])
+
+    report = await MultiSourceComparator({"deezer": deezer}).compare(REFERENCE)
+
+    assert report.candidates == [deezer_result]
+    assert report.selected == deezer_result
+
+
+@pytest.mark.asyncio
 async def test_reference_candidate_prevents_duplicate_manifest_request():
     tidal = FakeClient("tidal", candidate("tidal", "t1", 24, 96000))
     seed = tidal.result
@@ -356,7 +389,7 @@ async def test_one_hanging_service_times_out_without_blocking_others():
 
 
 @pytest.mark.asyncio
-async def test_conflicting_isrc_is_rejected_before_stream_inspection():
+async def test_conflicting_isrc_with_strong_metadata_is_inspected():
     qobuz = FakeClient(
         "qobuz",
         candidate("qobuz", "q1", 24, 192000),
@@ -365,8 +398,8 @@ async def test_conflicting_isrc_is_rejected_before_stream_inspection():
 
     report = await MultiSourceComparator({"qobuz": qobuz}).compare(REFERENCE)
 
-    assert report.candidates == []
-    assert report.selected is None
+    assert report.candidates == [qobuz.result]
+    assert report.selected == qobuz.result
 
 
 @pytest.mark.asyncio

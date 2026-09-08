@@ -63,6 +63,25 @@ async def test_tidal_cascade_returns_best_lossy_delivery_when_no_lossless_exists
 
 
 @pytest.mark.asyncio
+async def test_tidal_lossy_fallback_prefers_stereo_aac_over_eac3_atmos():
+    client = object.__new__(TidalClient)
+    client.session = Mock()
+
+    async def request(_path, params=None, **_kwargs):
+        if params["audioquality"] == "LOSSLESS":
+            return playback(
+                "HIGH", "eac3", bitrate=768, channels=6, audioMode="DOLBY_ATMOS"
+            )
+        return playback("HIGH", "mp4a.40.2", bitrate=320)
+
+    client._api_request = request
+    result = await client.get_downloadable("123", quality=2)
+
+    assert result.quality.codec == "mp4a.40.2"
+    assert result.quality.spatial is False
+
+
+@pytest.mark.asyncio
 async def test_tidal_cascade_supports_hires_lossless_as_top_tier():
     client = object.__new__(TidalClient)
     client.session = Mock()

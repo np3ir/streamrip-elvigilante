@@ -49,6 +49,7 @@ class Track(Media):
     completion_callback: Callable[[str], None] | None = None
     failure_callback: Callable[[str], None] | None = None
     failure_id: str | None = None
+    skip_isrc_check: bool = False
 
     def _mark_complete(self):
         if self.completion_callback is not None:
@@ -72,7 +73,7 @@ class Track(Media):
         # 2. Cross-source ISRC check: skip if this recording was already downloaded
         #    from a different platform (Deezer vs Tidal vs Qobuz).
         isrc = self.meta.isrc
-        if isrc and self.db.isrc_downloaded(isrc):
+        if not self.skip_isrc_check and isrc and self.db.isrc_downloaded(isrc):
             console.print(f"[yellow]Skipped (ISRC, other source)[/]: {self.meta.title}")
             self._mark_complete()
             if self.is_single: remove_title(self.meta.title)

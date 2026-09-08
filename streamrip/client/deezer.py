@@ -236,6 +236,15 @@ class DeezerClient(Client):
             return [response]
         return []
 
+    async def lookup_isrc(self, isrc: str) -> dict | None:
+        """Resolve Deezer's exact ``track/isrc:`` endpoint."""
+
+        try:
+            track = await asyncio.to_thread(self.client.api.get_track_by_ISRC, isrc)
+        except DataException:
+            return None
+        return track if isinstance(track, dict) and track.get("id") else None
+
     async def get_downloadable(
         self,
         item_id: str,

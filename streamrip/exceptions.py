@@ -74,5 +74,9 @@ class TidalRateLimitError(Exception):
     """TIDAL throttled the current run enough to trip its safety breaker."""
 
 
+class TidalSessionRejectedError(Exception):
+    """TIDAL rejected the OAuth session used by this client."""
+
+
 class ReferenceIdentityUnavailableError(Exception):
     """Cross-service failover lacks enough trusted reference metadata."""

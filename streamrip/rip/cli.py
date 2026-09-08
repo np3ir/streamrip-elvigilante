@@ -20,7 +20,11 @@ from rich.traceback import install
 from .. import __version__, db
 from ..config import DEFAULT_CONFIG_PATH, Config, OutdatedConfigError, set_user_defaults
 from ..console import console
-from ..exceptions import ReferenceIdentityUnavailableError, TidalRateLimitError
+from ..exceptions import (
+    ReferenceIdentityUnavailableError,
+    TidalRateLimitError,
+    TidalSessionRejectedError,
+)
 from ..progress import clear_progress
 from ..utils.ssl_utils import get_aiohttp_connector_kwargs
 from .main import Main
@@ -35,6 +39,8 @@ def coro(f):
             raise click.ClickException(
                 f"{error}. The run stopped safely; retry later."
             ) from error
+        except TidalSessionRejectedError as error:
+            raise click.ClickException(str(error)) from error
         finally:
             clear_progress()
 
@@ -323,11 +329,101 @@ async def file(ctx, path):
 
                 await main.resolve()
                 await main.rip()
+
     except aiohttp.ClientConnectorCertificateError as e:
         from ..utils.ssl_utils import print_ssl_error_help
 
         console.print(f"[red]SSL Certificate verification error: {e}[/red]")
         print_ssl_error_help()
+
+
+@rip.group("library-index")
+def library_index():
+    """Build and inspect the persistent tagged-library ISRC index."""
+
+
+def _print_index_scan(result) -> None:
+    console.print(
+        f"[green]Indexed[/green] {result.root}: discovered={result.discovered}, "
+        f"changed={result.indexed}, unchanged={result.unchanged}, "
+        f"untagged={result.untagged}, removed={result.removed}, failed={result.failed}"
+    )
+
+
+def _print_index_progress(position: int, total: int) -> None:
+    if total == 0:
+        console.print(f"[dim]Discovered audio files: {position}[/dim]")
+        return
+    if position == total or position % 100 == 0:
+        console.print(f"[dim]Reading tags: {position}/{total}[/dim]")
+
+
+@library_index.command("build")
+@click.argument(
+    "root",
+    type=click.Path(exists=True, readable=True, file_okay=False, path_type=Path),
+)
+@click.option("--workers", type=click.IntRange(1, 32), default=8, show_default=True)
+def library_index_build(root: Path, workers: int):
+    """Add ROOT and scan its tagged audio files incrementally."""
+
+    from ..library_index import LibraryIndex
+
+    _print_index_scan(
+        LibraryIndex().scan(root, workers=workers, progress=_print_index_progress)
+    )
+
+
+@library_index.command("update")
+@click.option("--workers", type=click.IntRange(1, 32), default=8, show_default=True)
+def library_index_update(workers: int):
+    """Rescan every previously registered root incrementally."""
+
+    from ..library_index import LibraryIndex
+
+    index = LibraryIndex()
+    results = index.update(workers=workers, progress=_print_index_progress)
+    if not results:
+        console.print("[yellow]No available indexed roots. Run library-index build.[/yellow]")
+        return
+    for result in results:
+        _print_index_scan(result)
+
+
+@library_index.command("status")
+def library_index_status():
+    """Show indexed roots and recording counts."""
+
+    from datetime import datetime
+
+    from ..library_index import LibraryIndex
+
+    index = LibraryIndex()
+    console.print(f"[bold]Indexed tracks:[/bold] {index.count()}")
+    roots = index.roots()
+    if not roots:
+        console.print("[yellow]No indexed roots.[/yellow]")
+    for root, scanned_ns in roots:
+        scanned = datetime.fromtimestamp(scanned_ns / 1_000_000_000).isoformat(
+            sep=" ", timespec="seconds"
+        )
+        console.print(f"{root} — last scan {scanned}")
+
+
+@library_index.command("duplicates")
+def library_index_duplicates():
+    """Report duplicate ISRCs without changing library files."""
+
+    from ..library_index import LibraryIndex
+
+    duplicates = LibraryIndex().duplicates()
+    if not duplicates:
+        console.print("[green]No indexed ISRC duplicates.[/green]")
+        return
+    for isrc, matches in duplicates:
+        console.print(f"[yellow]{isrc}[/yellow]")
+        for match in matches:
+            console.print(f"  {match.path}")
 
 
 @rip.group()
@@ -854,11 +950,12 @@ async def compare_sources(
 
     from ..comparison import (
         MultiSourceComparator,
+        catalog_match,
         format_quality,
         resolve_comparison_collection,
         service_quality_for_ceiling,
     )
-    from ..multisource import QualityCeiling, match_tracks, normalize_sample_rate
+    from ..multisource import QualityCeiling, normalize_sample_rate
     from .parse_url import GenericURL, parse_url
 
     if ctx.obj["config"] is None:
@@ -914,6 +1011,7 @@ async def compare_sources(
                 if fallback_to_lossy is not None
                 else policy.fallback_to_lossy
             ),
+            allow_spatial=policy.allow_spatial,
         )
         async with Main(cfg) as main:
             reference_client = await _get_logged_in_client_bounded(main, source)
@@ -981,7 +1079,7 @@ async def compare_sources(
                         f"\n[bold]Track {position}/{len(collection.track_ids)}:[/bold] "
                         f"{report.reference.artist} — {report.reference.title}"
                     )
-                _print_comparison_report(report, format_quality, match_tracks)
+                _print_comparison_report(report, format_quality, catalog_match)
                 if report.selected is not None:
                     winner = report.selected.identity.source
                     winners[winner] = winners.get(winner, 0) + 1
@@ -1113,6 +1211,14 @@ async def id(ctx, source, media_type, id):
     "--save-lyrics/--no-save-lyrics", default=None,
     help="Save synchronized .lrc sidecars for this job.",
 )
+@click.option(
+    "--allow-spatial/--no-spatial", default=None,
+    help="Allow or reject Atmos/EAC3 fallback for this job.",
+)
+@click.option(
+    "--fallback-to-lossy/--no-fallback-to-lossy", default=None,
+    help="Allow or reject lossy fallback when no lossless candidate qualifies.",
+)
 @click.argument("url")
 @click.pass_context
 @coro
@@ -1129,6 +1235,8 @@ async def library(
     max_bit_depth,
     max_sample_rate,
     save_lyrics,
+    allow_spatial,
+    fallback_to_lossy,
     url,
 ):
     """Build a resumable best-quality library plan from a service URL."""
@@ -1141,6 +1249,7 @@ async def library(
         iter_library_tracks,
         library_job_signature,
     )
+    from ..library_index import LibraryIndex, quality_at_least
     from ..multisource import QualityCeiling, normalize_sample_rate
     from .parse_url import GenericURL, parse_url
 
@@ -1167,7 +1276,14 @@ async def library(
             bit_depth=bit_depth,
             sample_rate_hz=normalize_sample_rate(sample_rate),
             prefer_lossless=policy.prefer_lossless,
-            fallback_to_lossy=policy.fallback_to_lossy,
+            fallback_to_lossy=(
+                policy.fallback_to_lossy
+                if fallback_to_lossy is None
+                else fallback_to_lossy
+            ),
+            allow_spatial=(
+                policy.allow_spatial if allow_spatial is None else allow_spatial
+            ),
         )
         priority = tuple(
             dict.fromkeys((*service_priority, *policy.service_priority))
@@ -1185,11 +1301,13 @@ async def library(
                 "sample_rate": sample_rate,
                 "prefer_lossless": ceiling.prefer_lossless,
                 "fallback_to_lossy": ceiling.fallback_to_lossy,
+                "allow_spatial": ceiling.allow_spatial,
                 "priority": priority,
                 "save_lyrics": cfg.session.lyrics.save_lrc,
             }
         )
         checkpoint = LibraryCheckpoint(signature).load()
+        library_index_db = LibraryIndex()
         audit = (
             LibraryManifest(signature, path=manifest_path)
             if manifest_enabled
@@ -1230,6 +1348,7 @@ async def library(
             attempted = 0
             skipped_resume = 0
             skipped_duplicate = 0
+            skipped_indexed = 0
             failed = 0
             winners: dict[str, int] = {}
             seen: set[str] = set()
@@ -1337,6 +1456,29 @@ async def library(
                     f"[{processed}] {winner}: {quality_text} — "
                     f"{track.artist} — {track.title}"
                 )
+                indexed = library_index_db.best(track.isrc) if track.isrc else None
+                if indexed is not None and quality_at_least(indexed.quality, quality):
+                    skipped_indexed += 1
+                    checkpoint.mark_done(key)
+                    console.print(
+                        f"[yellow]Skipped (Indexed ISRC)[/yellow]: {indexed.path}"
+                    )
+                    if audit is not None:
+                        audit.record(
+                            "indexed_existing",
+                            key=key,
+                            reference_source=track.source,
+                            reference_id=track.source_id,
+                            isrc=track.isrc,
+                            title=track.title,
+                            artist=track.artist,
+                            path=indexed.path,
+                            codec=indexed.codec,
+                            lossless=indexed.lossless,
+                            bit_depth=indexed.bit_depth,
+                            sample_rate_hz=indexed.sample_rate_hz,
+                        )
+                    continue
                 if dry_run:
                     checkpoint.mark_done(key)
                     if audit is not None:
@@ -1379,7 +1521,21 @@ async def library(
                         if candidate.identity.source == service and service in clients
                     )
                     def mark_completed(path, *, track=track, selected=selected, key=key):
+                        if not os.path.isfile(path):
+                            logger.warning(
+                                "Library completion ignored because no audio file "
+                                "exists at %s",
+                                path,
+                            )
+                            mark_download_failed(path)
+                            return
                         checkpoint.mark_done(key)
+                        try:
+                            library_index_db.index_file(
+                                path, cfg.session.downloads.folder
+                            )
+                        except Exception as error:
+                            logger.warning("Could not update library index: %s", error)
                         if audit is not None:
                             audit.record(
                                 "completed",
@@ -1444,7 +1600,8 @@ async def library(
             console.print(
                 f"\n[bold green]Library summary:[/bold green] processed={processed}, "
                 f"attempted={attempted}, winners=({summary}), failed={failed}, "
-                f"duplicates={skipped_duplicate}, resume-skipped={skipped_resume}"
+                f"duplicates={skipped_duplicate}, indexed-skipped={skipped_indexed}, "
+                f"resume-skipped={skipped_resume}"
             )
             for service, error in unavailable.items():
                 console.print(f"[yellow]{service} unavailable:[/yellow] {error}")

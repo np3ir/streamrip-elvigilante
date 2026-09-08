@@ -44,6 +44,8 @@ max_sample_rate = 0.0
 prefer_lossless = true
 # If no lossless candidate satisfies the ceiling, allow the best lossy fallback.
 fallback_to_lossy = true
+# Allow Atmos/EAC3 as a lossy fallback. Disabled for a stereo music library.
+allow_spatial = false
 # Tie-break order after delivered audio quality is equal.
 service_priority = ["tidal", "deezer", "qobuz"]
 # Conservative number of simultaneous cross-service comparisons (1-8).

@@ -7,6 +7,7 @@ import logging
 import os
 import random
 import re
+import tempfile
 import time
 from types import SimpleNamespace
 
@@ -20,6 +21,7 @@ from ..exceptions import (
     MissingCredentialsError,
     NonStreamableError,
     TidalRateLimitError,
+    TidalSessionRejectedError,
 )
 from .audio_probe import probe_flac_quality
 from .client import Client
@@ -79,6 +81,17 @@ QUALITY_MAP = {
 
 QUALITY_PRIORITY = [4, 3, 2, 1, 0]
 
+
+def _lossy_fallback_rank(quality) -> tuple[int, int, int, int]:
+    """Prefer ordinary stereo delivery over spatial lossy delivery."""
+
+    return (
+        int(not quality.spatial),
+        quality.bitrate_kbps or 0,
+        quality.sample_rate_hz or 0,
+        quality.channels or 0,
+    )
+
 # Dedicated token file — separate from config.toml, with restricted permissions
 _TOKEN_FILE = os.path.join(click.get_app_dir("streamrip"), "tidal_token.json")
 _FALLBACK_TOKEN_FILE = os.path.join(
@@ -106,21 +119,43 @@ class TidalTokenStore:
         except (FileNotFoundError, json.JSONDecodeError):
             return None
 
-    def save(self, access_token: str, refresh_token: str, token_expiry: float,
-             user_id: str, country_code: str) -> None:
+    def save(
+        self,
+        access_token: str,
+        refresh_token: str,
+        token_expiry: float,
+        user_id: str,
+        country_code: str,
+        client_id: str,
+    ) -> None:
         data = {
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_expiry": token_expiry,
             "user_id": user_id,
             "country_code": country_code,
+            "client_id": client_id,
         }
-        with open(self.path, "w") as f:
-            json.dump(data, f, indent=2)
+        directory = os.path.dirname(self.path)
+        os.makedirs(directory, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(
+            dir=directory,
+            prefix=f".{os.path.basename(self.path)}.",
+            suffix=".tmp",
+        )
         try:
-            os.chmod(self.path, 0o600)
-        except Exception:
-            pass  # Windows has a different permission model; best-effort only
+            with os.fdopen(fd, "w") as file:
+                json.dump(data, file, indent=2)
+                file.flush()
+                os.fsync(file.fileno())
+            try:
+                os.chmod(temporary, 0o600)
+            except OSError:
+                pass
+            os.replace(temporary, self.path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
 
 class TidalClient(Client):
@@ -158,6 +193,7 @@ class TidalClient(Client):
         self.allow_lossless_fallback = allow_lossless_fallback
         self._lossless_fallback_client: TidalClient | None = None
         self._lossless_fallback_checked = False
+        self._refresh_blocked = False
         
         # --- CONFIGURACIÓN DE SEGURIDAD ---
         rpm = config.session.downloads.requests_per_minute
@@ -237,6 +273,12 @@ class TidalClient(Client):
             c.token_expiry  = stored.get("token_expiry", c.token_expiry)
             c.user_id       = stored.get("user_id", c.user_id)
             c.country_code  = stored.get("country_code", c.country_code)
+            stored_client_id = stored.get("client_id")
+            if stored_client_id and stored_client_id != self.oauth_client_id:
+                raise AuthenticationError(
+                    "The saved TIDAL token belongs to a different OAuth client; "
+                    "authorize this Streamrip session again"
+                )
         elif self.token_role != "primary":
             raise MissingCredentialsError(
                 "TIDAL fallback credentials are not configured"
@@ -247,7 +289,17 @@ class TidalClient(Client):
 
         if self.token_expiry - time.time() < _REFRESH_THRESHOLD:
             if self.refresh_token:
-                await self._refresh_access_token()
+                try:
+                    await self._refresh_access_token()
+                except TidalSessionRejectedError:
+                    if self.token_expiry <= time.time() or not c.access_token:
+                        raise
+                    self._refresh_blocked = True
+                    self._update_authorization_from_config()
+                    logger.warning(
+                        "TIDAL rejected a preventive token refresh; continuing "
+                        "with the current valid token until it expires"
+                    )
         else:
             if c.access_token:
                 await self._login_by_access_token(c.access_token, c.user_id)
@@ -493,7 +545,9 @@ class TidalClient(Client):
                     continue
                 if delivered_quality.lossless:
                     return downloadable
-                if best_lossy is None or delivered_quality.rank > best_lossy.quality.rank:
+                if best_lossy is None or _lossy_fallback_rank(
+                    delivered_quality
+                ) > _lossy_fallback_rank(best_lossy.quality):
                     best_lossy = downloadable
             except (NonStreamableError, TidalRateLimitError):
                 raise
@@ -520,7 +574,9 @@ class TidalClient(Client):
                         error,
                     )
                 else:
-                    if fallback_result.quality.rank > best_lossy.quality.rank:
+                    if fallback_result.quality.lossless or _lossy_fallback_rank(
+                        fallback_result.quality
+                    ) > _lossy_fallback_rank(best_lossy.quality):
                         return fallback_result
         if best_lossy is not None:
             return best_lossy
@@ -612,6 +668,7 @@ class TidalClient(Client):
                 token_expiry=float(c.token_expiry) if c.token_expiry else 0,
                 user_id=str(c.user_id or ""),
                 country_code=str(c.country_code or ""),
+                client_id=self.oauth_client_id,
             )
         except Exception as e:
             logger.warning(f"Could not persist Tidal token: {e}")
@@ -628,36 +685,58 @@ class TidalClient(Client):
                 return
             if (
                 not force
+                and not self._refresh_blocked
                 and self.config.token_expiry
                 and float(self.config.token_expiry) - time.time() > _REFRESH_THRESHOLD
             ):
                 return
+            if self._refresh_blocked and not force:
+                return
             logger.info("Refreshing Tidal token...")
             data = {
                 "client_id": getattr(self, "oauth_client_id", CLIENT_ID),
-                "client_secret": getattr(
-                    self, "oauth_client_secret", CLIENT_SECRET
-                ),
                 "refresh_token": self.refresh_token,
                 "grant_type": "refresh_token",
-                "scope": "r_usr+w_usr+w_sub",
             }
+            basic_credentials = base64.b64encode(
+                f"{self.oauth_client_id}:{self.oauth_client_secret}".encode()
+            ).decode()
             try:
                 # Do NOT use the semaphore here: if all connections are waiting for
                 # this refresh to complete, using the semaphore would deadlock.
                 async with self.session.post(
                     f"{AUTH_URL}/token",
                     data=data,
+                    headers={"Authorization": f"Basic {basic_credentials}"},
                 ) as resp:
                     resp_data = await resp.json()
 
                 if resp_data.get("status", 200) != 200:
+                    if (
+                        resp_data.get("error") == "abuse_detected"
+                        or (
+                            resp_data.get("status") == 403
+                            and resp_data.get("sub_status") == 12001
+                        )
+                    ):
+                        raise TidalSessionRejectedError(
+                            "TIDAL rejected Streamrip's saved OAuth session "
+                            "(403/12001, abuse_detected). Streamrip stopped all "
+                            "TIDAL operations; this does not prove that other "
+                            "sessions for the same account are unavailable"
+                        )
                     if resp_data.get("error") == "invalid_client":
                         raise AuthenticationError(
                             "The saved TIDAL session uses an unavailable OAuth "
                             "client and must be authorized again"
                         )
-                    raise Exception(f"Refresh failed: {resp_data}")
+                    error_code = resp_data.get("error", "unknown_error")
+                    status = resp_data.get("status", "unknown")
+                    sub_status = resp_data.get("sub_status")
+                    detail = f"status={status}, error={error_code}"
+                    if sub_status is not None:
+                        detail += f", sub_status={sub_status}"
+                    raise AuthenticationError(f"TIDAL token refresh failed ({detail})")
 
                 c = self.config
                 c.access_token = resp_data["access_token"]
@@ -667,10 +746,11 @@ class TidalClient(Client):
                     self.refresh_token = c.refresh_token
                 self._update_authorization_from_config()
                 self._persist_token()
+                self._refresh_blocked = False
                 logger.info("Token refreshed.")
-            except Exception as e:
-                logger.error(f"Refresh failed: {e}")
-                raise e
+            except Exception as error:
+                logger.error("TIDAL token refresh failed: %s", error)
+                raise
 
     async def _get_device_code(self) -> tuple[str, str]:
         """Start TIDAL device authorization and return code plus login URI."""

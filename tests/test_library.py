@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -327,6 +328,38 @@ async def test_track_completion_callback_runs_for_verified_existing_file(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_library_mode_uses_quality_index_instead_of_legacy_isrc_skip(tmp_path):
+    config = Config("tests/test_config.toml")
+    metadata = Mock(title="Stereo upgrade", artist="Artist", isrc="ISRC1")
+    metadata.info = Mock(id="t1", explicit=False)
+    metadata.format_track_path.return_value = "Stereo upgrade"
+    downloadable = Mock(source="deezer", extension="flac")
+    downloadable.size = AsyncMock(return_value=5)
+
+    async def publish(path, _update, **_kwargs):
+        Path(path).write_bytes(b"audio")
+
+    downloadable.download = AsyncMock(side_effect=publish)
+    database = Mock()
+    database.isrc_downloaded.return_value = True
+    item = Track(
+        metadata,
+        downloadable,
+        config,
+        str(tmp_path),
+        None,
+        database,
+        skip_isrc_check=True,
+    )
+    item.postprocess = AsyncMock()
+
+    await item.rip()
+
+    downloadable.download.assert_awaited_once()
+    item.postprocess.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_existing_audio_repairs_missing_lrc_without_redownload(tmp_path):
     config = Config("tests/test_config.toml")
     metadata = Mock(title="Canonical", artist="Artist", isrc="ISRC1")
@@ -508,6 +541,32 @@ async def test_persistent_workers_consume_before_streaming_producer_finishes():
     assert main.queue.maxsize == 2
     assert main.download_workers
     await main.finish_download_workers()
+
+
+@pytest.mark.asyncio
+async def test_main_cleanup_finishes_all_clients_when_cancelled(tmp_path):
+    main = Main.__new__(Main)
+    main.download_workers = []
+    main.database = Mock(downloads=Mock(), failed=Mock())
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+
+    async def close_client():
+        close_started.set()
+        await allow_close.wait()
+
+    clients = [Mock(close=AsyncMock(side_effect=close_client)) for _ in range(4)]
+    main.clients = {str(position): client for position, client in enumerate(clients)}
+
+    cleanup = asyncio.create_task(main.__aexit__(None, None, None))
+    await asyncio.wait_for(close_started.wait(), timeout=1)
+    cleanup.cancel()
+    allow_close.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await cleanup
+    for client in clients:
+        client.close.assert_awaited_once()
     assert main.download_workers == []
 
 

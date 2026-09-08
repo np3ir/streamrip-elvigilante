@@ -48,6 +48,11 @@ class Client(ABC):
         downloadable = await self.get_downloadable(item, quality)
         return service_candidate(self.source, metadata, downloadable)
 
+    async def lookup_isrc(self, isrc: str) -> dict | None:
+        """Return an exact ISRC result when the service exposes such a route."""
+
+        return None
+
     @staticmethod
     def get_rate_limiter(
         requests_per_min: int,

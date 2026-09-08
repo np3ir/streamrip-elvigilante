@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .multisource import (
     MatchKind,
@@ -137,6 +137,23 @@ def search_items(source: str, pages: list[dict]) -> list[dict]:
     return items
 
 
+def catalog_match(left: TrackIdentity, right: TrackIdentity) -> MatchKind:
+    """Match catalog records while tolerating a demonstrably bad provider ISRC.
+
+    ISRC remains authoritative when equal.  When two providers publish
+    conflicting ISRCs, accept only the existing strict metadata match: same
+    normalized title (including edition/version), same artist, and duration
+    within three seconds.
+    """
+
+    match = match_tracks(left, right)
+    if match is not MatchKind.NONE:
+        return match
+    if not left.isrc or not right.isrc:
+        return MatchKind.NONE
+    return match_tracks(replace(left, isrc=None), replace(right, isrc=None))
+
+
 def service_quality_for_ceiling(
     source: str,
     configured_quality: int,
@@ -230,13 +247,30 @@ class MultiSourceComparator:
             except Exception as error:
                 candidate_errors.append(error)
             else:
-                if match_tracks(reference, candidate.identity) is not MatchKind.NONE:
+                if catalog_match(reference, candidate.identity) is not MatchKind.NONE:
                     verified.append(candidate)
                     seen_ids.add(candidate.identity.source_id)
 
         from .client.candidate import track_identity
 
         matches: list[tuple[int, TrackIdentity]] = []
+        if reference.isrc:
+            exact_lookup = getattr(client, "lookup_isrc", None)
+            if exact_lookup is not None:
+                try:
+                    exact_item = await exact_lookup(reference.isrc.strip())
+                except Exception as error:
+                    candidate_errors.append(error)
+                    exact_item = None
+                if exact_item:
+                    exact_identity = track_identity(source, exact_item)
+                    if (
+                        exact_identity.source_id
+                        and exact_identity.source_id not in seen_ids
+                        and catalog_match(reference, exact_identity) is MatchKind.ISRC
+                    ):
+                        seen_ids.add(exact_identity.source_id)
+                        matches.append((-1, exact_identity))
         queries = []
         if reference.isrc:
             queries.append(reference.isrc.strip())
@@ -251,7 +285,7 @@ class MultiSourceComparator:
                 if not identity.source_id or identity.source_id in seen_ids:
                     continue
                 seen_ids.add(identity.source_id)
-                kind = match_tracks(reference, identity)
+                kind = catalog_match(reference, identity)
                 if kind is not MatchKind.NONE:
                     match_priority = 0 if kind is MatchKind.ISRC else 1
                     priority = (
@@ -267,7 +301,7 @@ class MultiSourceComparator:
             except Exception as error:
                 candidate_errors.append(error)
                 continue
-            if match_tracks(reference, candidate.identity) is not MatchKind.NONE:
+            if catalog_match(reference, candidate.identity) is not MatchKind.NONE:
                 verified.append(candidate)
         if verified:
             return choose_best(verified)
