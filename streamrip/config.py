@@ -99,6 +99,7 @@ class ComparisonConfig:
     prefer_lossless: bool = True
     fallback_to_lossy: bool = True
     allow_spatial: bool = False
+    tidal_429_strike_limit: int = 0
     service_priority: list[str] = dataclass_field(
         default_factory=lambda: ["tidal", "deezer", "qobuz"]
     )

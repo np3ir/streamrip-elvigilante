@@ -206,7 +206,9 @@ class TidalClient(Client):
 
         self.semaphore = asyncio.Semaphore(safe_conn)
         self.request_budget = request_budget or SharedRequestBudget(safe_rpm)
-        self.rate_limit_guard = rate_limit_guard or RateLimitGuard()
+        self.rate_limit_guard = rate_limit_guard or RateLimitGuard(
+            config.session.comparison.tidal_429_strike_limit
+        )
         self._rate_limit_delay: float = 0.0  # Adaptive: grows on 429, shrinks on success
         # --------------------------------------------
 
@@ -921,6 +923,7 @@ class TidalClient(Client):
                         if resp.status == 404:
                             raise NonStreamableError("Not Found")
                         resp.raise_for_status()
+                        self.rate_limit_guard.note_success()
                         self._rate_limit_delay = max(0.0, self._rate_limit_delay - 0.1)
                         try:
                             return await resp.json()

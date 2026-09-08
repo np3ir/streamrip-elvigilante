@@ -10,21 +10,29 @@ DEFAULT_429_STRIKE_LIMIT = 12
 
 
 class RateLimitGuard:
-    """Count 429 responses and trip once at a bounded per-run threshold."""
+    """Trip after consecutive 429 responses; zero disables the circuit breaker."""
 
     def __init__(self, strike_limit: int = DEFAULT_429_STRIKE_LIMIT) -> None:
-        if strike_limit <= 0:
-            raise ValueError("strike_limit must be positive")
+        if strike_limit < 0:
+            raise ValueError("strike_limit must be zero or positive")
         self.strike_limit = strike_limit
         self.strikes = 0
         self.tripped = False
 
     def note_rate_limited(self) -> bool:
+        if self.strike_limit == 0:
+            return False
         self.strikes += 1
         if self.strikes >= self.strike_limit and not self.tripped:
             self.tripped = True
             return True
         return False
+
+    def note_success(self) -> None:
+        """A successful request ends the current consecutive-429 sequence."""
+
+        self.strikes = 0
+        self.tripped = False
 
 
 class SharedRequestBudget:

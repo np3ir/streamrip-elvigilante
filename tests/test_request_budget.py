@@ -42,7 +42,7 @@ async def test_nonpositive_rpm_uses_safe_default():
     assert budget.interval == 1.0
 
 
-def test_rate_limit_guard_trips_once_and_stays_tripped():
+def test_rate_limit_guard_trips_after_consecutive_responses():
     guard = RateLimitGuard(strike_limit=3)
 
     assert guard.note_rate_limited() is False
@@ -53,6 +53,24 @@ def test_rate_limit_guard_trips_once_and_stays_tripped():
     assert guard.tripped is True
 
 
-def test_rate_limit_guard_rejects_nonpositive_limit():
-    with pytest.raises(ValueError, match="positive"):
-        RateLimitGuard(strike_limit=0)
+def test_rate_limit_guard_resets_after_success():
+    guard = RateLimitGuard(strike_limit=2)
+
+    assert guard.note_rate_limited() is False
+    guard.note_success()
+    assert guard.strikes == 0
+    assert guard.tripped is False
+    assert guard.note_rate_limited() is False
+
+
+def test_zero_disables_rate_limit_guard():
+    guard = RateLimitGuard(strike_limit=0)
+
+    assert all(guard.note_rate_limited() is False for _ in range(100))
+    assert guard.strikes == 0
+    assert guard.tripped is False
+
+
+def test_rate_limit_guard_rejects_negative_limit():
+    with pytest.raises(ValueError, match="zero or positive"):
+        RateLimitGuard(strike_limit=-1)
