@@ -208,6 +208,9 @@ class MultiSourceComparator:
                         reference,
                         qualities.get(source, getattr(client, "max_quality", 0)),
                         reference_candidate if source == reference.source else None,
+                        allow_quality_fallback=(
+                            ceiling is None or ceiling.fallback_to_lossy
+                        ),
                     ),
                     timeout=self.source_timeout,
                 )
@@ -234,6 +237,8 @@ class MultiSourceComparator:
         reference: TrackIdentity,
         quality: int,
         seed: ServiceCandidate | None = None,
+        *,
+        allow_quality_fallback: bool = True,
     ) -> ServiceCandidate | None:
         verified: list[ServiceCandidate] = []
         candidate_errors: list[Exception] = []
@@ -243,7 +248,11 @@ class MultiSourceComparator:
             seen_ids.add(seed.identity.source_id)
         elif source == reference.source:
             try:
-                candidate = await client.get_candidate(reference.source_id, quality)
+                candidate = await client.get_candidate(
+                    reference.source_id,
+                    quality,
+                    allow_quality_fallback=allow_quality_fallback,
+                )
             except Exception as error:
                 candidate_errors.append(error)
             else:
@@ -297,7 +306,11 @@ class MultiSourceComparator:
 
         for _, identity in sorted(matches, key=lambda pair: pair[0]):
             try:
-                candidate = await client.get_candidate(identity.source_id, quality)
+                candidate = await client.get_candidate(
+                    identity.source_id,
+                    quality,
+                    allow_quality_fallback=allow_quality_fallback,
+                )
             except Exception as error:
                 candidate_errors.append(error)
                 continue

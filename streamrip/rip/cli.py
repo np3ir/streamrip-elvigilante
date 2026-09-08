@@ -82,9 +82,18 @@ async def _compare_with_reference_failover(
     from ..client.candidate import service_candidate, track_identity
 
     try:
-        downloadable = await reference_client.get_downloadable(
-            track_id, reference_quality
-        )
+        if source == "deezer":
+            downloadable = await reference_client.get_downloadable(
+                track_id,
+                reference_quality,
+                allow_quality_fallback=(
+                    ceiling is None or ceiling.fallback_to_lossy
+                ),
+            )
+        else:
+            downloadable = await reference_client.get_downloadable(
+                track_id, reference_quality
+            )
     except TidalRateLimitError as error:
         if source != "tidal":
             raise

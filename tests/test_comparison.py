@@ -67,7 +67,9 @@ class FakeClient:
             raise self.error
         return self.pages
 
-    async def get_candidate(self, source_id, quality):
+    async def get_candidate(
+        self, source_id, quality, *, allow_quality_fallback=True
+    ):
         assert source_id == self.result.identity.source_id
         assert quality == 4
         await asyncio.sleep(self.delay)
@@ -275,6 +277,32 @@ async def test_exact_isrc_lookup_precedes_empty_text_search():
 
 
 @pytest.mark.asyncio
+async def test_strict_ceiling_disables_service_quality_fallback():
+    result = candidate("deezer", "d1", 16, 44100)
+
+    class StrictClient(FakeClient):
+        async def get_candidate(
+            self, source_id, quality, *, allow_quality_fallback=True
+        ):
+            assert allow_quality_fallback is False
+            return await super().get_candidate(
+                source_id,
+                quality,
+                allow_quality_fallback=allow_quality_fallback,
+            )
+
+    deezer = StrictClient(
+        "deezer", result, [search_page("deezer", "d1")]
+    )
+    report = await MultiSourceComparator({"deezer": deezer}).compare(
+        REFERENCE,
+        ceiling=QualityCeiling(bit_depth=16, fallback_to_lossy=False),
+    )
+
+    assert report.selected == result
+
+
+@pytest.mark.asyncio
 async def test_reference_candidate_prevents_duplicate_manifest_request():
     tidal = FakeClient("tidal", candidate("tidal", "t1", 24, 96000))
     seed = tidal.result
@@ -292,7 +320,9 @@ async def test_selects_best_matching_edition_within_reference_service():
     better = candidate("qobuz", "q2", 24, 88200)
 
     class EditionsClient(FakeClient):
-        async def get_candidate(self, source_id, quality):
+        async def get_candidate(
+            self, source_id, quality, *, allow_quality_fallback=True
+        ):
             assert quality == 4
             return {"q1": seed, "q2": better}[source_id]
 
@@ -324,7 +354,9 @@ async def test_unplayable_matching_edition_does_not_hide_a_later_candidate():
     playable = candidate("qobuz", "q2", 24, 88200)
 
     class EditionsClient(FakeClient):
-        async def get_candidate(self, source_id, quality):
+        async def get_candidate(
+            self, source_id, quality, *, allow_quality_fallback=True
+        ):
             assert quality == 4
             if source_id == "q1":
                 raise RuntimeError("edition unavailable")
@@ -373,7 +405,9 @@ async def test_one_hanging_service_times_out_without_blocking_others():
     good = candidate("qobuz", "q1", 16, 44100)
 
     class HangingClient(FakeClient):
-        async def get_candidate(self, _source_id, _quality):
+        async def get_candidate(
+            self, _source_id, _quality, *, allow_quality_fallback=True
+        ):
             await asyncio.Event().wait()
 
     clients = {
@@ -412,10 +446,16 @@ async def test_duplicate_results_from_isrc_and_metadata_are_inspected_once():
     calls = 0
     original = qobuz.get_candidate
 
-    async def counted_candidate(source_id, quality):
+    async def counted_candidate(
+        source_id, quality, *, allow_quality_fallback=True
+    ):
         nonlocal calls
         calls += 1
-        return await original(source_id, quality)
+        return await original(
+            source_id,
+            quality,
+            allow_quality_fallback=allow_quality_fallback,
+        )
 
     qobuz.get_candidate = counted_candidate
 

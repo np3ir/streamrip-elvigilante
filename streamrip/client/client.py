@@ -39,7 +39,13 @@ class Client(ABC):
     async def get_downloadable(self, item: str, quality: int) -> Downloadable:
         raise NotImplementedError
 
-    async def get_candidate(self, item: str, quality: int):
+    async def get_candidate(
+        self,
+        item: str,
+        quality: int,
+        *,
+        allow_quality_fallback: bool = True,
+    ):
         """Inspect one track as a service-neutral candidate without downloading it."""
 
         from .candidate import service_candidate

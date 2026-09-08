@@ -126,7 +126,11 @@ class DeezerClient(Client):
                 asyncio.to_thread(self.client.api.get_album_tracks, album_id),
             )
         except Exception as e:
-            logger.error(f"Error fetching album of track {item_id}: {e}")
+            logger.debug(
+                "Optional album enrichment unavailable for Deezer track %s: %s",
+                item_id,
+                e,
+            )
             return item
 
         album_metadata["tracks"] = album_tracks["data"]
@@ -245,11 +249,35 @@ class DeezerClient(Client):
             return None
         return track if isinstance(track, dict) and track.get("id") else None
 
+    async def get_candidate(
+        self,
+        item: str,
+        quality: int,
+        *,
+        allow_quality_fallback: bool = True,
+    ):
+        """Inspect a Deezer stream without fetching its complete album."""
+
+        from .candidate import service_candidate
+
+        try:
+            metadata = await asyncio.to_thread(self.client.api.get_track, item)
+        except Exception as error:
+            raise NonStreamableError(error) from error
+        downloadable = await self.get_downloadable(
+            item,
+            quality,
+            allow_quality_fallback=allow_quality_fallback,
+        )
+        return service_candidate(self.source, metadata, downloadable)
+
     async def get_downloadable(
         self,
         item_id: str,
         quality: int = 2,
         is_retry: bool = False,
+        *,
+        allow_quality_fallback: bool | None = None,
     ) -> DeezerDownloadable:
         if item_id is None:
             raise NonStreamableError(
@@ -273,7 +301,11 @@ class DeezerClient(Client):
         dl_info["quality_to_size"] = file_sizes
 
         # Respect lower_quality_if_not_available flag (self.config is DeezerConfig).
-        allow_fallback = getattr(self.config, "lower_quality_if_not_available", True)
+        allow_fallback = (
+            getattr(self.config, "lower_quality_if_not_available", True)
+            if allow_quality_fallback is None
+            else allow_quality_fallback
+        )
 
         actual_quality = quality
         for q in range(quality, -1, -1):
@@ -287,6 +319,20 @@ class DeezerClient(Client):
 
         if actual_quality < quality:
             if not allow_fallback:
+                if not is_retry and fallback_id:
+                    logger.debug(
+                        "Deezer track %s lacks quality %d; checking regional "
+                        "fallback %s at the same tier",
+                        item_id,
+                        quality,
+                        fallback_id,
+                    )
+                    return await self.get_downloadable(
+                        fallback_id,
+                        quality,
+                        is_retry=True,
+                        allow_quality_fallback=False,
+                    )
                 raise NonStreamableError(
                     f"The requested quality {quality} is not available and fallback is disabled."
                 )
@@ -311,14 +357,24 @@ class DeezerClient(Client):
         except deezer.WrongGeolocation:
             if not is_retry and fallback_id:
                 logger.warning("Track %s unavailable due to geolocation, trying fallback %s", item_id, fallback_id)
-                return await self.get_downloadable(fallback_id, quality, is_retry=True)
+                return await self.get_downloadable(
+                    fallback_id,
+                    quality,
+                    is_retry=True,
+                    allow_quality_fallback=allow_quality_fallback,
+                )
             raise NonStreamableError(
                 "The requested track is not available. This may be due to your country/location.",
             )
         except Exception as e:
             if not is_retry and fallback_id:
                 logger.warning("URL fetch failed for track %s (%s), trying fallback %s", item_id, e, fallback_id)
-                return await self.get_downloadable(fallback_id, quality, is_retry=True)
+                return await self.get_downloadable(
+                    fallback_id,
+                    quality,
+                    is_retry=True,
+                    allow_quality_fallback=allow_quality_fallback,
+                )
             raise NonStreamableError(f"Could not get download URL for track {item_id}: {e}")
 
         dl_info["url"] = url
