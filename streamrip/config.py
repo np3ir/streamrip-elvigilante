@@ -95,6 +95,7 @@ class ConversionConfig:
 @dataclass(slots=True)
 class ComparisonConfig:
     max_bit_depth: int = 0
+    bit_depth_order: list[int] = dataclass_field(default_factory=list)
     max_sample_rate: float = 0.0
     prefer_lossless: bool = True
     fallback_to_lossy: bool = True

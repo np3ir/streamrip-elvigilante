@@ -92,6 +92,7 @@ class QualityCeiling:
     prefer_lossless: bool = True
     fallback_to_lossy: bool = True
     allow_spatial: bool = False
+    bit_depth_order: tuple[int, ...] = ()
 
     def allows(self, quality: AudioQuality) -> bool:
         if quality.spatial and not self.allow_spatial:
@@ -100,6 +101,8 @@ class QualityCeiling:
         # lossy delivery remains the final fallback below lossless candidates.
         if not quality.lossless:
             return self.fallback_to_lossy
+        if self.bit_depth_order and quality.bit_depth not in self.bit_depth_order:
+            return False
         if self.bit_depth is not None:
             if quality.bit_depth is None or quality.bit_depth > self.bit_depth:
                 return False
@@ -170,6 +173,20 @@ def choose_best(
 
     def selection_rank(item: ServiceCandidate):
         quality = item.quality
+        if ceiling is not None and ceiling.bit_depth_order:
+            depth_rank = {
+                depth: len(ceiling.bit_depth_order) - position
+                for position, depth in enumerate(ceiling.bit_depth_order)
+            }.get(quality.bit_depth, 0)
+            rank = (
+                int(quality.lossless),
+                depth_rank,
+                quality.sample_rate_hz or 0,
+                quality.bitrate_kbps or 0,
+                quality.channels or 0,
+                int(quality.spatial),
+            )
+            return rank, priority_rank.get(item.identity.source, 0)
         if ceiling is None or ceiling.prefer_lossless:
             rank = quality.rank
         else:

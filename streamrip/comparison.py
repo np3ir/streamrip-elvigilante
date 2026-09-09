@@ -170,6 +170,27 @@ def service_quality_for_ceiling(
     return configured_quality
 
 
+def service_qualities_for_ceiling(
+    source: str,
+    configured_quality: int,
+    ceiling: QualityCeiling | None,
+) -> tuple[int, ...]:
+    """Return service tiers needed to evaluate an ordered bit-depth policy."""
+
+    if ceiling is None or not ceiling.bit_depth_order:
+        return (service_quality_for_ceiling(source, configured_quality, ceiling),)
+    tiers = []
+    for depth in ceiling.bit_depth_order:
+        if depth < 16:
+            tier = min(configured_quality, 1)
+        elif depth == 16:
+            tier = min(configured_quality, 2)
+        else:
+            tier = configured_quality
+        tiers.append(tier)
+    return tuple(tiers)
+
+
 class MultiSourceComparator:
     """Find and inspect equivalent recordings across authenticated clients."""
 
@@ -189,7 +210,7 @@ class MultiSourceComparator:
     async def compare(
         self,
         reference: TrackIdentity,
-        quality_by_source: dict[str, int] | None = None,
+        quality_by_source: dict[str, int | tuple[int, ...]] | None = None,
         reference_candidate: ServiceCandidate | None = None,
         ceiling: QualityCeiling | None = None,
     ) -> ComparisonReport:
@@ -199,35 +220,67 @@ class MultiSourceComparator:
             service_priority=self.service_priority,
         )
         qualities = quality_by_source or {}
-        results = await asyncio.gather(
-            *(
-                asyncio.wait_for(
-                    self._candidate_for_source(
-                        source,
-                        client,
-                        reference,
-                        qualities.get(source, getattr(client, "max_quality", 0)),
-                        reference_candidate if source == reference.source else None,
-                        allow_quality_fallback=(
-                            ceiling is None or ceiling.fallback_to_lossy
-                        ),
-                    ),
-                    timeout=self.source_timeout,
-                )
-                for source, client in self.clients.items()
-                if source in {"tidal", "qobuz", "deezer"}
-            ),
-            return_exceptions=True,
-        )
-
         sources = [
             source for source in self.clients if source in {"tidal", "qobuz", "deezer"}
         ]
-        for source, result in zip(sources, results):
-            if isinstance(result, Exception):
-                report.errors[source] = f"{type(result).__name__}: {result}"
-            elif result is not None:
-                report.candidates.append(result)
+        requested = {
+            source: (
+                value
+                if isinstance(value := qualities.get(
+                    source, getattr(self.clients[source], "max_quality", 0)
+                ), tuple)
+                else (value,)
+            )
+            for source in sources
+        }
+        rounds = max((len(values) for values in requested.values()), default=0)
+        seen_candidates = set()
+        for round_index in range(rounds):
+            active_sources = [
+                source for source in sources if round_index < len(requested[source])
+            ]
+            results = await asyncio.gather(
+                *(
+                    asyncio.wait_for(
+                        self._candidate_for_source(
+                            source,
+                            self.clients[source],
+                            reference,
+                            requested[source][round_index],
+                            (
+                                reference_candidate
+                                if round_index == 0 and source == reference.source
+                                else None
+                            ),
+                            allow_quality_fallback=(
+                                ceiling is None or ceiling.fallback_to_lossy
+                            ),
+                        ),
+                        timeout=self.source_timeout,
+                    )
+                    for source in active_sources
+                ),
+                return_exceptions=True,
+            )
+            round_candidates = []
+            for source, result in zip(active_sources, results):
+                if isinstance(result, Exception):
+                    report.errors[source] = f"{type(result).__name__}: {result}"
+                elif result is not None:
+                    report.errors.pop(source, None)
+                    key = (result.identity.source, result.identity.source_id, result.quality)
+                    if key not in seen_candidates:
+                        seen_candidates.add(key)
+                        report.candidates.append(result)
+                    round_candidates.append(result)
+
+            if ceiling is not None and ceiling.bit_depth_order:
+                target_depth = ceiling.bit_depth_order[round_index]
+                if any(
+                    item.quality.lossless and item.quality.bit_depth == target_depth
+                    for item in round_candidates
+                ):
+                    break
         return report
 
     async def _candidate_for_source(
@@ -235,7 +288,7 @@ class MultiSourceComparator:
         source: str,
         client,
         reference: TrackIdentity,
-        quality: int,
+        quality: int | tuple[int, ...],
         seed: ServiceCandidate | None = None,
         *,
         allow_quality_fallback: bool = True,
@@ -243,22 +296,24 @@ class MultiSourceComparator:
         verified: list[ServiceCandidate] = []
         candidate_errors: list[Exception] = []
         seen_ids: set[str] = set()
+        requested_qualities = quality if isinstance(quality, tuple) else (quality,)
         if seed is not None:
             verified.append(seed)
             seen_ids.add(seed.identity.source_id)
         elif source == reference.source:
-            try:
-                candidate = await client.get_candidate(
-                    reference.source_id,
-                    quality,
-                    allow_quality_fallback=allow_quality_fallback,
-                )
-            except Exception as error:
-                candidate_errors.append(error)
-            else:
-                if catalog_match(reference, candidate.identity) is not MatchKind.NONE:
-                    verified.append(candidate)
-                    seen_ids.add(candidate.identity.source_id)
+            for requested_quality in requested_qualities:
+                try:
+                    candidate = await client.get_candidate(
+                        reference.source_id,
+                        requested_quality,
+                        allow_quality_fallback=allow_quality_fallback,
+                    )
+                except Exception as error:
+                    candidate_errors.append(error)
+                else:
+                    if catalog_match(reference, candidate.identity) is not MatchKind.NONE:
+                        verified.append(candidate)
+                        seen_ids.add(candidate.identity.source_id)
 
         from .client.candidate import track_identity
 
@@ -305,17 +360,18 @@ class MultiSourceComparator:
                     matches.append((priority, identity))
 
         for _, identity in sorted(matches, key=lambda pair: pair[0]):
-            try:
-                candidate = await client.get_candidate(
-                    identity.source_id,
-                    quality,
-                    allow_quality_fallback=allow_quality_fallback,
-                )
-            except Exception as error:
-                candidate_errors.append(error)
-                continue
-            if catalog_match(reference, candidate.identity) is not MatchKind.NONE:
-                verified.append(candidate)
+            for requested_quality in requested_qualities:
+                try:
+                    candidate = await client.get_candidate(
+                        identity.source_id,
+                        requested_quality,
+                        allow_quality_fallback=allow_quality_fallback,
+                    )
+                except Exception as error:
+                    candidate_errors.append(error)
+                    continue
+                if catalog_match(reference, candidate.identity) is not MatchKind.NONE:
+                    verified.append(candidate)
         if verified:
             return choose_best(verified)
         if candidate_errors:

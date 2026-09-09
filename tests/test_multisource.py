@@ -138,6 +138,42 @@ def test_bit_depth_ceiling_prefers_16_bit_over_higher_resolution():
     assert choose_best([hires, cd], QualityCeiling(bit_depth=16)) is cd
 
 
+def test_explicit_bit_depth_order_prefers_16_then_24():
+    cd = candidate(
+        "deezer",
+        AudioQuality(codec="flac", lossless=True, bit_depth=16, sample_rate_hz=44100),
+    )
+    hires = candidate(
+        "qobuz",
+        AudioQuality(codec="flac", lossless=True, bit_depth=24, sample_rate_hz=192000),
+    )
+    ceiling = QualityCeiling(
+        bit_depth=24,
+        fallback_to_lossy=False,
+        bit_depth_order=(16, 24),
+    )
+
+    assert choose_best([hires, cd], ceiling) is cd
+    assert choose_best([hires], ceiling) is hires
+
+
+def test_explicit_bit_depth_order_rejects_unlisted_lossless_depth():
+    unusual = candidate(
+        "qobuz",
+        AudioQuality(codec="flac", lossless=True, bit_depth=20, sample_rate_hz=48000),
+    )
+
+    with pytest.raises(ValueError, match="quality ceiling"):
+        choose_best(
+            [unusual],
+            QualityCeiling(
+                bit_depth=24,
+                fallback_to_lossy=False,
+                bit_depth_order=(16, 24),
+            ),
+        )
+
+
 def test_ceiling_falls_back_to_lossy_when_lossless_delivery_is_too_high():
     hires = candidate(
         "qobuz",

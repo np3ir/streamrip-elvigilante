@@ -58,6 +58,20 @@ def _is_help_invocation(argv=None) -> bool:
     return any(arg in {"-h", "--help"} for arg in args)
 
 
+def _parse_bit_depth_order(_ctx, _param, value):
+    if value is None:
+        return None
+    try:
+        depths = tuple(int(part.strip()) for part in value.split(","))
+    except ValueError as error:
+        raise click.BadParameter("use comma-separated integers, e.g. 16,24") from error
+    if not depths or any(depth < 1 or depth > 64 for depth in depths):
+        raise click.BadParameter("depths must be integers from 1 through 64")
+    if len(set(depths)) != len(depths):
+        raise click.BadParameter("depths must not be repeated")
+    return depths
+
+
 async def _get_logged_in_client_bounded(
     main,
     source: str,
@@ -80,6 +94,11 @@ async def _compare_with_reference_failover(
     """Continue on other services when TIDAL's run-wide breaker trips."""
 
     from ..client.candidate import service_candidate, track_identity
+
+    if getattr(ceiling, "bit_depth_order", ()):
+        return await comparator.compare(
+            track_identity(source, metadata), qualities, ceiling=ceiling
+        )
 
     try:
         if source == "deezer":
@@ -924,6 +943,11 @@ async def search(ctx, first, output_file, num_results, source, media_type, query
     help="Maximum lossless bit depth; higher deliveries are excluded.",
 )
 @click.option(
+    "--bit-depth-order",
+    callback=_parse_bit_depth_order,
+    help="Preferred lossless depths, e.g. 16,24. Only listed depths qualify.",
+)
+@click.option(
     "--max-sample-rate",
     type=click.FloatRange(min=1),
     help="Maximum sample rate in kHz (for example 44.1, 48, 96 or 192).",
@@ -949,6 +973,7 @@ async def compare_sources(
     services,
     service_priority,
     max_bit_depth,
+    bit_depth_order,
     max_sample_rate,
     prefer_lossless,
     fallback_to_lossy,
@@ -962,7 +987,7 @@ async def compare_sources(
         catalog_match,
         format_quality,
         resolve_comparison_collection,
-        service_quality_for_ceiling,
+        service_qualities_for_ceiling,
     )
     from ..multisource import QualityCeiling, normalize_sample_rate
     from .parse_url import GenericURL, parse_url
@@ -1002,6 +1027,17 @@ async def compare_sources(
             if max_bit_depth is not None
             else (policy.max_bit_depth or None)
         )
+        if bit_depth_order is not None and max_bit_depth is not None:
+            raise click.UsageError(
+                "Use either --max-bit-depth or --bit-depth-order, not both."
+            )
+        effective_depth_order = (
+            bit_depth_order
+            if bit_depth_order is not None
+            else (() if max_bit_depth is not None else tuple(policy.bit_depth_order))
+        )
+        if effective_depth_order:
+            bit_depth = max(effective_depth_order)
         sample_rate = (
             max_sample_rate
             if max_sample_rate is not None
@@ -1021,6 +1057,7 @@ async def compare_sources(
                 else policy.fallback_to_lossy
             ),
             allow_spatial=policy.allow_spatial,
+            bit_depth_order=effective_depth_order,
         )
         async with Main(cfg) as main:
             reference_client = await _get_logged_in_client_bounded(main, source)
@@ -1035,7 +1072,7 @@ async def compare_sources(
                     f"[bold cyan]{collection.name}[/bold cyan] — "
                     f"{len(collection.track_ids)} track(s)"
                 )
-            reference_quality = service_quality_for_ceiling(
+            reference_qualities = service_qualities_for_ceiling(
                 source,
                 cfg.session.get_source(source).quality,
                 ceiling,
@@ -1053,7 +1090,7 @@ async def compare_sources(
                     login_errors[service] = f"{type(error).__name__}: {error}"
 
             qualities = {
-                service: service_quality_for_ceiling(
+                service: service_qualities_for_ceiling(
                     service,
                     cfg.session.get_source(service).quality,
                     ceiling,
@@ -1077,7 +1114,7 @@ async def compare_sources(
                     track_id=track_id,
                     metadata=reference_metadata,
                     reference_client=reference_client,
-                    reference_quality=reference_quality,
+                    reference_quality=reference_qualities[0],
                     comparator=comparator,
                     qualities=qualities,
                     ceiling=ceiling,
@@ -1213,6 +1250,11 @@ async def id(ctx, source, media_type, id):
     help="Maximum lossless bit depth for this job.",
 )
 @click.option(
+    "--bit-depth-order",
+    callback=_parse_bit_depth_order,
+    help="Preferred lossless depths, e.g. 16,24. Only listed depths qualify.",
+)
+@click.option(
     "--max-sample-rate", type=click.FloatRange(min=1),
     help="Maximum sample rate in kHz for this job.",
 )
@@ -1242,6 +1284,7 @@ async def library(
     manifest_path,
     service_priority,
     max_bit_depth,
+    bit_depth_order,
     max_sample_rate,
     save_lyrics,
     allow_spatial,
@@ -1250,7 +1293,7 @@ async def library(
 ):
     """Build a resumable best-quality library plan from a service URL."""
 
-    from ..comparison import MultiSourceComparator, service_quality_for_ceiling
+    from ..comparison import MultiSourceComparator, service_qualities_for_ceiling
     from ..library import (
         LibraryCheckpoint,
         LibraryManifest,
@@ -1278,6 +1321,17 @@ async def library(
         bit_depth = max_bit_depth if max_bit_depth is not None else (
             policy.max_bit_depth or None
         )
+        if bit_depth_order is not None and max_bit_depth is not None:
+            raise click.UsageError(
+                "Use either --max-bit-depth or --bit-depth-order, not both."
+            )
+        effective_depth_order = (
+            bit_depth_order
+            if bit_depth_order is not None
+            else (() if max_bit_depth is not None else tuple(policy.bit_depth_order))
+        )
+        if effective_depth_order:
+            bit_depth = max(effective_depth_order)
         sample_rate = max_sample_rate if max_sample_rate is not None else (
             policy.max_sample_rate or None
         )
@@ -1293,6 +1347,7 @@ async def library(
             allow_spatial=(
                 policy.allow_spatial if allow_spatial is None else allow_spatial
             ),
+            bit_depth_order=effective_depth_order,
         )
         priority = tuple(
             dict.fromkeys((*service_priority, *policy.service_priority))
@@ -1307,6 +1362,7 @@ async def library(
                 "expansion": expansion,
                 "download": not dry_run,
                 "bit_depth": bit_depth,
+                "bit_depth_order": effective_depth_order,
                 "sample_rate": sample_rate,
                 "prefer_lossless": ceiling.prefer_lossless,
                 "fallback_to_lossy": ceiling.fallback_to_lossy,
@@ -1342,7 +1398,7 @@ async def library(
                     unavailable[service] = f"{type(error).__name__}: {error}"
 
             qualities = {
-                service: service_quality_for_ceiling(
+                service: service_qualities_for_ceiling(
                     service,
                     cfg.session.get_source(service).quality,
                     ceiling,
@@ -1352,7 +1408,7 @@ async def library(
             comparator = MultiSourceComparator(
                 clients, service_priority=priority
             )
-            reference_quality = qualities[source]
+            reference_quality = qualities[source][0]
             processed = 0
             attempted = 0
             skipped_resume = 0

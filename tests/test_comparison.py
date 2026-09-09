@@ -9,6 +9,7 @@ from streamrip.comparison import (
     format_quality,
     resolve_comparison_collection,
     search_items,
+    service_qualities_for_ceiling,
     service_quality_for_ceiling,
 )
 from streamrip.exceptions import TidalRateLimitError
@@ -132,6 +133,89 @@ def test_16_bit_ceiling_requests_cd_tiers_from_all_services():
     assert service_quality_for_ceiling("tidal", 4, ceiling) == 2
     assert service_quality_for_ceiling("qobuz", 4, ceiling) == 2
     assert service_quality_for_ceiling("deezer", 2, ceiling) == 2
+
+
+def test_ordered_depth_policy_requests_cd_and_hires_tiers():
+    ceiling = QualityCeiling(bit_depth=24, bit_depth_order=(16, 24))
+
+    assert service_qualities_for_ceiling("tidal", 4, ceiling) == (2, 4)
+    assert service_qualities_for_ceiling("qobuz", 3, ceiling) == (2, 3)
+    assert service_qualities_for_ceiling("deezer", 2, ceiling) == (2, 2)
+
+
+@pytest.mark.asyncio
+async def test_ordered_depth_comparison_skips_hires_round_when_cd_exists():
+    cd = candidate("tidal", "t1", 16, 44100)
+    hires = candidate("tidal", "t1", 24, 96000)
+
+    class TierClient:
+        source = "tidal"
+        max_quality = 4
+
+        def __init__(self):
+            self.calls = []
+
+        async def get_candidate(
+            self, source_id, quality, *, allow_quality_fallback=True
+        ):
+            self.calls.append(quality)
+            return {2: cd, 4: hires}[quality]
+
+        async def search(self, media_type, query, limit):
+            return []
+
+    client = TierClient()
+    ceiling = QualityCeiling(
+        bit_depth=24,
+        fallback_to_lossy=False,
+        bit_depth_order=(16, 24),
+    )
+    report = await MultiSourceComparator({"tidal": client}).compare(
+        REFERENCE,
+        quality_by_source={"tidal": (2, 4)},
+        ceiling=ceiling,
+    )
+
+    assert report.selected == cd
+    assert client.calls == [2]
+
+
+@pytest.mark.asyncio
+async def test_ordered_depth_comparison_uses_hires_only_after_cd_miss():
+    hires = candidate("tidal", "t1", 24, 96000)
+
+    class TierClient:
+        source = "tidal"
+        max_quality = 4
+
+        def __init__(self):
+            self.calls = []
+
+        async def get_candidate(
+            self, source_id, quality, *, allow_quality_fallback=True
+        ):
+            self.calls.append(quality)
+            if quality == 2:
+                raise RuntimeError("CD tier unavailable")
+            return hires
+
+        async def search(self, media_type, query, limit):
+            return []
+
+    client = TierClient()
+    ceiling = QualityCeiling(
+        bit_depth=24,
+        fallback_to_lossy=False,
+        bit_depth_order=(16, 24),
+    )
+    report = await MultiSourceComparator({"tidal": client}).compare(
+        REFERENCE,
+        quality_by_source={"tidal": (2, 4)},
+        ceiling=ceiling,
+    )
+
+    assert report.selected == hires
+    assert client.calls == [2, 4]
 
 
 class MetadataClient:

@@ -25,6 +25,7 @@ def test_compare_command_is_registered_with_safe_preview_help():
     assert "downloading is opt-in" in command.help
     assert "download_best" in [parameter.name for parameter in command.params]
     assert "max_bit_depth" in [parameter.name for parameter in command.params]
+    assert "bit_depth_order" in [parameter.name for parameter in command.params]
     assert "max_sample_rate" in [parameter.name for parameter in command.params]
     assert "prefer_lossless" in [parameter.name for parameter in command.params]
     assert "fallback_to_lossy" in [parameter.name for parameter in command.params]
@@ -51,6 +52,7 @@ def test_library_command_registers_mass_processing_safety_options():
     assert "save_lyrics" in names
     assert "allow_spatial" in names
     assert "fallback_to_lossy" in names
+    assert "bit_depth_order" in names
 
 
 def test_library_index_commands_are_registered():

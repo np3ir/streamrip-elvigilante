@@ -38,6 +38,9 @@ destination_identity = "off"
 [comparison]
 # Permanent cross-service quality ceilings. Zero means no ceiling.
 max_bit_depth = 0
+# Optional preferred lossless depths, first to last; e.g. [16, 24].
+# When set, only these PCM bit depths qualify.
+bit_depth_order = []
 # Sample rate in kHz, for example 44.1, 48, 96 or 192. Zero means no ceiling.
 max_sample_rate = 0.0
 # Prefer lossless delivery over lossy spatial/bitrate alternatives.
